@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { initDb } from './db.js';
 import apiRouter from './routes/api.js';
 import { startScrapeWorkers } from './workers/scrapeWorkers.js';
+import { getPoolSummary } from './services/proxyPool.js';
 
 const app = express();
 app.use(cors());
@@ -24,6 +25,7 @@ async function main() {
   app.listen(config.port, () => {
     console.log(`API http://localhost:${config.port}`);
     console.log('Workers: post scraper (new.json) + comment scrapers (r/*/comments.json)');
+    console.log('Proxy pool:', getPoolSummary().map((p) => `${p.id} (${p.protocol})`).join(' → '));
   });
 }
 

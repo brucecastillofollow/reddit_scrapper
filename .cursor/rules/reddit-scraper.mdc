@@ -9,7 +9,8 @@ alwaysApply: true
 - **Backend**: Node.js Express (`backend/src/`), port 3001
 - **Frontend**: Vite + React (`frontend/`), port 5173
 - **DB**: PostgreSQL — 5 core tables (see below)
-- **Proxies**: 4 SOCKS5 (`PROXY_1`–`PROXY_4`) rotate on each Reddit request
+- **Endpoints**: round-robin `direct` (local IP) + `PROXY_1`…`PROXY_N` (`USE_DIRECT=true`)
+- **Protocols**: `socks5`, `socks4`, `http`, `https` — scheme in proxy URL picks the agent
 
 ## Database tables
 | Table | Purpose |

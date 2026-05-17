@@ -61,7 +61,11 @@ async function processListing(listing, stats) {
 }
 
 async function fetchNewPage(params) {
-  return fetchRedditJson(NEW_URL, { limit: 100, ...params });
+  return fetchRedditJson(
+    NEW_URL,
+    { limit: 100, ...params },
+    { kind: 'posts', target: 'new.json' },
+  );
 }
 
 export async function runPostScrape() {

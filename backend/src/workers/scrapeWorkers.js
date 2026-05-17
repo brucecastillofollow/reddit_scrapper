@@ -3,6 +3,7 @@ import { updateScrapeStatus } from '../db.js';
 import { countHealthyProxies } from '../services/proxyPool.js';
 import { runPostScrape } from '../services/postScraper.js';
 import { runCommentScrapeBatch } from '../services/commentScraper.js';
+import { errorMessageWithProxy, logScrapeFailureFromError } from '../services/scrapeLogger.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -37,9 +38,11 @@ async function postWorkerLoop() {
 
       await runPostScrape();
     } catch (err) {
-      console.error('[post-worker]', err.message);
+      await logScrapeFailureFromError('posts', err, { target: 'new.json' });
+      const msg = errorMessageWithProxy(err);
+      console.error('[post-worker]', msg);
       await updateScrapeStatus({
-        last_post_error: err.message,
+        last_post_error: msg,
         last_post_finished_at: new Date(),
       });
     } finally {
@@ -62,9 +65,11 @@ async function commentWorkerLoop() {
       await updateScrapeStatus({ comments_running: true, last_comment_error: null });
       await runCommentScrapeBatch();
     } catch (err) {
-      console.error('[comment-worker]', err.message);
+      await logScrapeFailureFromError('comments', err, { target: 'comment-batch' });
+      const msg = errorMessageWithProxy(err);
+      console.error('[comment-worker]', msg);
       await updateScrapeStatus({
-        last_comment_error: err.message,
+        last_comment_error: msg,
         last_comment_finished_at: new Date(),
       });
     } finally {

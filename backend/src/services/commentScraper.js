@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { updateScrapeStatus } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
+import { errorMessageWithProxy, logScrapeFailureFromError } from './scrapeLogger.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
 import {
   typedFieldsFromComment,
@@ -66,9 +67,11 @@ export async function runCommentScrapeForSubreddit(subRow) {
   let newestTs = last_timestamp ? new Date(last_timestamp) : null;
   let proxyIndex = 0;
 
-  let { data: listing, proxyIndex: pi } = await fetchRedditJson(commentsUrl(name), {
-    limit: 100,
-  });
+  let { data: listing, proxyIndex: pi } = await fetchRedditJson(
+    commentsUrl(name),
+    { limit: 100 },
+    { kind: 'comments', target: `r/${name}/comments.json`, subreddit: name },
+  );
   proxyIndex = pi;
 
   let meta = await processListing(listing, stats);
@@ -88,10 +91,11 @@ export async function runCommentScrapeForSubreddit(subRow) {
     let before = meta.after;
     let pages = 0;
     while (before && pages < config.maxPaginationPages) {
-      ({ data: listing, proxyIndex: pi } = await fetchRedditJson(commentsUrl(name), {
-        limit: 100,
-        before,
-      }));
+      ({ data: listing, proxyIndex: pi } = await fetchRedditJson(
+        commentsUrl(name),
+        { limit: 100, before },
+        { kind: 'comments', target: `r/${name}/comments.json`, subreddit: name },
+      ));
       proxyIndex = pi;
       const pageStats = { new: 0, existing: 0, total: 0 };
       meta = await processListing(listing, pageStats);
@@ -125,8 +129,12 @@ export async function runCommentScrapeBatch() {
   const subs = await getSubredditsDueForComments(config.commentConcurrency);
   const results = await Promise.all(
     subs.map((sub) =>
-      runCommentScrapeForSubreddit(sub).catch((err) => {
-        console.error(`[comments] r/${sub.name}:`, err.message);
+      runCommentScrapeForSubreddit(sub).catch(async (err) => {
+        await logScrapeFailureFromError('comments', err, {
+          target: `r/${sub.name}/comments.json`,
+          subreddit: sub.name,
+        });
+        console.error(`[comments] r/${sub.name}:`, errorMessageWithProxy(err));
         return null;
       }),
     ),

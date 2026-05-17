@@ -1,10 +1,27 @@
-import { createRedditClient, getNextProxy } from './proxyPool.js';
+import { createRedditClient, getNextEndpoint } from './proxyPool.js';
+import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
-export async function fetchRedditJson(url, params = {}) {
-  const proxy = getNextProxy();
-  const client = createRedditClient(proxy?.url ?? null);
-  const { data } = await client.get(url, { params });
-  return { data, proxyIndex: proxy?.index ?? 0 };
+export async function fetchRedditJson(url, params = {}, meta = {}) {
+  const endpoint = getNextEndpoint();
+  const client = createRedditClient(endpoint);
+
+  try {
+    const { data } = await client.get(url, { params });
+    return { data, proxyIndex: endpoint.index, endpoint };
+  } catch (err) {
+    const proxyInfo = describeEndpoint(endpoint);
+    await logScrapeFailure({
+      kind: meta.kind || 'fetch',
+      target: meta.target || url,
+      subreddit: meta.subreddit ?? null,
+      url,
+      params,
+      proxy: proxyInfo,
+      error: err.message,
+      status: err.response?.status ?? null,
+    });
+    throw enrichError(err, endpoint);
+  }
 }
 
 export function parseFullname(name) {

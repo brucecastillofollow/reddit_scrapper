@@ -5,10 +5,16 @@ const num = (v, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+const bool = (v, fallback) => {
+  if (v === undefined || v === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase());
+};
+
 export const config = {
   port: num(process.env.PORT, 3001),
   databaseUrl: process.env.DATABASE_URL || 'postgresql://reddit:reddit@localhost:5432/reddit_scraper',
   archiveDir: process.env.ARCHIVE_DIR || './data/archives',
+  scrapeFailureLog: process.env.SCRAPE_FAILURE_LOG || './data/logs/scrape-failures.log',
   retentionDays: num(process.env.RETENTION_DAYS, 30),
   redditUserAgent: process.env.REDDIT_USER_AGENT || 'reddit-scraper/1.0 (research project)',
   intervalMinSeconds: num(process.env.INTERVAL_MIN_SECONDS, 60),
@@ -18,10 +24,11 @@ export const config = {
   existingThreshold: num(process.env.EXISTING_THRESHOLD, 50),
   maxPaginationPages: num(process.env.MAX_PAGINATION_PAGES, 20),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
-  proxies: loadProxies(),
+  useDirect: bool(process.env.USE_DIRECT, true),
+  proxyUrls: loadProxyUrls(),
 };
 
-function loadProxies() {
+function loadProxyUrls() {
   const list = (process.env.PROXY_LIST || '')
     .split(',')
     .map((p) => p.trim())

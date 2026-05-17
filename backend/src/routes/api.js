@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, getGlobal, getScrapeStatus } from '../db.js';
 import { config } from '../config.js';
-import { getProxyCount } from '../services/proxyPool.js';
+import { getProxyCount, getPoolSummary } from '../services/proxyPool.js';
 import { isPostScrapeRunning, triggerPostScrape } from '../workers/scrapeWorkers.js';
 
 const router = Router();
@@ -38,6 +38,8 @@ router.get('/status', async (_req, res, next) => {
       },
       active_proxy_index: status?.active_proxy_index ?? 0,
       proxies_configured: getProxyCount(),
+      proxy_pool: getPoolSummary(),
+      use_direct: config.useDirect,
       proxies_healthy: status?.proxies_healthy ?? 0,
       retention_days: config.retentionDays,
       recent_subreddits: recentSubs,
