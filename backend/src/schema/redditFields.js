@@ -310,23 +310,23 @@ export function buildCreateTableSql(tableName, fieldTypes, { primaryKey = 'data_
     lines.push(`${name} ${type}${required ? ' NOT NULL' : ''}`);
   }
 
-  return `CREATE TABLE ${tableName} (\n  ${lines.join(',\n  ')}\n);`;
+  return `CREATE TABLE IF NOT EXISTS ${tableName} (\n  ${lines.join(',\n  ')}\n);`;
 }
 
-export function buildPostsSchemaSql() {
+export function buildPostsSchemaSql({ reset = false } = {}) {
+  const drop = reset ? 'DROP TABLE IF EXISTS posts CASCADE;\n' : '';
   return `
-DROP TABLE IF EXISTS posts CASCADE;
-${buildCreateTableSql('posts', POST_FIELD_TYPES)}
-CREATE INDEX ix_posts_subreddit ON posts (subreddit);
-CREATE INDEX ix_posts_created ON posts (created_utc);
+${drop}${buildCreateTableSql('posts', POST_FIELD_TYPES)}
+CREATE INDEX IF NOT EXISTS ix_posts_subreddit ON posts (subreddit);
+CREATE INDEX IF NOT EXISTS ix_posts_created ON posts (created_utc);
 `;
 }
 
-export function buildCommentsSchemaSql() {
+export function buildCommentsSchemaSql({ reset = false } = {}) {
+  const drop = reset ? 'DROP TABLE IF EXISTS comments CASCADE;\n' : '';
   return `
-DROP TABLE IF EXISTS comments CASCADE;
-${buildCreateTableSql('comments', COMMENT_FIELD_TYPES)}
-CREATE INDEX ix_comments_subreddit ON comments (subreddit);
-CREATE INDEX ix_comments_created ON comments (created_utc);
+${drop}${buildCreateTableSql('comments', COMMENT_FIELD_TYPES)}
+CREATE INDEX IF NOT EXISTS ix_comments_subreddit ON comments (subreddit);
+CREATE INDEX IF NOT EXISTS ix_comments_created ON comments (created_utc);
 `;
 }

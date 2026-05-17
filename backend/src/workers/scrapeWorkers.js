@@ -57,7 +57,7 @@ async function commentWorkerLoop() {
   while (true) {
     try {
       if (commentRunning) {
-        await sleep(2000);
+        await sleep(20);
         continue;
       }
 

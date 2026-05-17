@@ -6,12 +6,13 @@ const { Pool } = pg;
 
 export const pool = new Pool({ connectionString: config.databaseUrl });
 
-const SCHEMA = `
+function buildInitSql(resetData) {
+  return `
 DROP TABLE IF EXISTS reddit_posts, scrape_runs, archive_records CASCADE;
 
-${buildPostsSchemaSql()}
+${buildPostsSchemaSql({ reset: resetData })}
 
-${buildCommentsSchemaSql()}
+${buildCommentsSchemaSql({ reset: resetData })}
 
 CREATE TABLE IF NOT EXISTS subreddit (
   name VARCHAR(128) PRIMARY KEY,
@@ -38,9 +39,7 @@ CREATE TABLE IF NOT EXISTS global_ids (
 
 CREATE INDEX IF NOT EXISTS ix_global_ids_timestamp ON global_ids (timestamp);
 
-DROP TABLE IF EXISTS scrape_status CASCADE;
-
-CREATE TABLE scrape_status (
+CREATE TABLE IF NOT EXISTS scrape_status (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   posts_running BOOLEAN DEFAULT FALSE,
   comments_running BOOLEAN DEFAULT FALSE,
@@ -54,9 +53,13 @@ CREATE TABLE scrape_status (
 
 INSERT INTO scrape_status (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 `;
+}
 
 export async function initDb() {
-  await pool.query(SCHEMA);
+  if (config.dbResetOnStart) {
+    console.warn('[db] DB_RESET_ON_START=true — wiping posts and comments tables');
+  }
+  await pool.query(buildInitSql(config.dbResetOnStart));
 }
 
 export async function getScrapeStatus() {

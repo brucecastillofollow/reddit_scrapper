@@ -25,6 +25,7 @@ export const config = {
   maxPaginationPages: num(process.env.MAX_PAGINATION_PAGES, 20),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
   useDirect: bool(process.env.USE_DIRECT, true),
+  dbResetOnStart: bool(process.env.DB_RESET_ON_START, false),
   proxyUrls: loadProxyUrls(),
 };
 
