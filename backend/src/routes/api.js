@@ -1,33 +1,46 @@
 import { Router } from 'express';
-import { pool } from '../db.js';
+import { pool, getGlobal, getScrapeStatus } from '../db.js';
 import { config } from '../config.js';
-import { getStatusRow } from '../db.js';
-import { runScrapeCycle, isScrapeRunning } from '../services/scraper.js';
 import { getProxyCount } from '../services/proxyPool.js';
+import { isPostScrapeRunning, triggerPostScrape } from '../workers/scrapeWorkers.js';
 
 const router = Router();
 
 router.get('/status', async (_req, res, next) => {
   try {
-    const status = await getStatusRow();
-    const { rows: recentRuns } = await pool.query(
-      `SELECT id, started_at, finished_at, status, query, proxy_used,
-              posts_fetched, posts_inserted, error_message
-       FROM scrape_runs ORDER BY started_at DESC LIMIT 10`,
+    const [status, global, postsCount, commentsCount, subredditCount] = await Promise.all([
+      getScrapeStatus(),
+      getGlobal(),
+      pool.query('SELECT COUNT(*)::bigint AS c FROM posts'),
+      pool.query('SELECT COUNT(*)::bigint AS c FROM comments'),
+      pool.query('SELECT COUNT(*)::int AS c FROM subreddit'),
+    ]);
+
+    const { rows: recentSubs } = await pool.query(
+      `SELECT name, last_timestamp, interval_seconds, last_poll_at
+       FROM subreddit ORDER BY last_poll_at DESC NULLS LAST LIMIT 10`,
     );
+
     res.json({
-      is_running: status?.is_running ?? false,
-      last_started_at: status?.last_started_at ?? null,
-      last_finished_at: status?.last_finished_at ?? null,
-      last_error: status?.last_error ?? null,
-      total_posts_in_db: Number(status?.total_posts_in_db ?? 0),
+      posts_running: status?.posts_running ?? false,
+      comments_running: status?.comments_running ?? false,
+      last_post_finished_at: status?.last_post_finished_at ?? null,
+      last_comment_finished_at: status?.last_comment_finished_at ?? null,
+      last_post_error: status?.last_post_error ?? null,
+      last_comment_error: status?.last_comment_error ?? null,
+      total_posts_in_db: Number(postsCount.rows[0].c),
+      total_comments_in_db: Number(commentsCount.rows[0].c),
+      subreddit_count: subredditCount.rows[0].c,
+      global: {
+        last_timestamp: global?.last_timestamp ?? null,
+        interval_seconds: global?.interval_seconds ?? null,
+        last_poll_at: global?.last_poll_at ?? null,
+      },
       active_proxy_index: status?.active_proxy_index ?? 0,
       proxies_configured: getProxyCount(),
       proxies_healthy: status?.proxies_healthy ?? 0,
       retention_days: config.retentionDays,
-      scrape_interval_minutes: config.scrapeIntervalMinutes,
-      search_queries: config.searchQueries,
-      recent_runs: recentRuns,
+      recent_subreddits: recentSubs,
     });
   } catch (err) {
     next(err);
@@ -44,32 +57,34 @@ router.get('/posts', async (req, res, next) => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - config.retentionDays);
 
-    const params = [cutoff];
+    const filterParams = [cutoff];
     let where = 'created_utc >= $1';
 
     if (keyword) {
-      params.push(`%${keyword}%`);
+      filterParams.push(`%${keyword}%`);
+      const p = filterParams.length;
       where += ` AND (
-        title ILIKE $${params.length}
-        OR subreddit ILIKE $${params.length}
-        OR search_query ILIKE $${params.length}
-        OR author ILIKE $${params.length}
+        title ILIKE $${p}
+        OR subreddit ILIKE $${p}
+        OR author ILIKE $${p}
+        OR selftext ILIKE $${p}
       )`;
     }
 
-    const countSql = `SELECT COUNT(*)::int AS total FROM reddit_posts WHERE ${where}`;
-    const listSql = `
-      SELECT id, reddit_id, title, subreddit, author, permalink, url,
-             score, num_comments, created_utc, search_query, scraped_at
-      FROM reddit_posts WHERE ${where}
-      ORDER BY created_utc DESC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    const countParams = [...filterParams];
+    const listParams = [...filterParams, limit, offset];
 
-    params.push(limit, offset);
+    const countSql = `SELECT COUNT(*)::int AS total FROM posts WHERE ${where}`;
+    const listSql = `
+      SELECT data_id, fullname, title, subreddit, author, permalink, url,
+             score, num_comments, created_utc, updated_at
+      FROM posts WHERE ${where}
+      ORDER BY created_utc DESC
+      LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`;
 
     const [{ rows: countRows }, { rows: items }] = await Promise.all([
-      pool.query(countSql, params.slice(0, keyword ? 2 : 1)),
-      pool.query(listSql, params),
+      pool.query(countSql, countParams),
+      pool.query(listSql, listParams),
     ]);
 
     res.json({
@@ -87,20 +102,21 @@ router.get('/posts', async (req, res, next) => {
 
 router.post('/scrape/run', async (_req, res, next) => {
   try {
-    if (isScrapeRunning()) {
-      return res.status(409).json({ error: 'Scrape already in progress' });
+    if (isPostScrapeRunning()) {
+      return res.status(409).json({ error: 'Post scrape already in progress' });
     }
-    runScrapeCycle().catch(() => {});
-    res.json({ message: 'Scrape started' });
+    triggerPostScrape().catch(() => {});
+    res.json({ message: 'Post scrape triggered' });
   } catch (err) {
     next(err);
   }
 });
 
-router.get('/archives', async (_req, res, next) => {
+router.get('/subreddits', async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, archive_date, file_path, post_count, created_at FROM archive_records ORDER BY archive_date DESC',
+      `SELECT name, last_timestamp, interval_seconds, last_poll_at
+       FROM subreddit ORDER BY name`,
     );
     res.json({ items: rows });
   } catch (err) {

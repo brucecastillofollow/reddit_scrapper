@@ -1,38 +1,40 @@
 ---
-description: Reddit scraper monorepo — Express backend, Vite React frontend, PostgreSQL
+description: Reddit scraper — Express, Vite, PostgreSQL, SOCKS5 proxies
 alwaysApply: true
 ---
 
 # Reddit Scraper Service
 
 ## Stack
-- **Backend**: Node.js, Express (`backend/`), port 3001
-- **Frontend**: Vite + React (`frontend/`), port 5173, proxies `/api` → backend
-- **DB**: PostgreSQL — holds posts from the **last 30 days** only
-- **Archives**: Posts older than 30 days → one JSON file per day → ZIP in `ARCHIVE_DIR`
-- **Proxies**: 4 SOCKS5 URLs (`PROXY_1`…`PROXY_4`) rotate for `https://www.reddit.com/search.json`
+- **Backend**: Node.js Express (`backend/src/`), port 3001
+- **Frontend**: Vite + React (`frontend/`), port 5173
+- **DB**: PostgreSQL — 5 core tables (see below)
+- **Proxies**: 4 SOCKS5 (`PROXY_1`–`PROXY_4`) rotate on each Reddit request
+
+## Database tables
+| Table | Purpose |
+|-------|---------|
+| `posts` | Post data from `new.json` (typed cols + `raw_data` JSONB) |
+| `comments` | Comment data from `r/{sub}/comments.json` |
+| `subreddit` | `name`, `last_timestamp`, `interval_seconds` — comment scrape schedule |
+| `global` | Singleton: post scrape `last_timestamp`, `interval_seconds` |
+| `global_ids` | `type` (t3/t1), `data_id`, `timestamp` — dedup registry |
+
+## Scraping workers
+1. **Post worker** (single loop): `https://www.reddit.com/new.json`
+   - Upsert `posts`, register `global_ids`, auto-add `subreddit` (now−10min, 600s interval)
+   - All new in batch → paginate `?before={after}` until existing found → **shorten** global interval
+   - >50 existing in batch → **lengthen** global interval
+2. **Comment workers** (parallel, `COMMENT_CONCURRENCY`): `https://www.reddit.com/r/{name}/comments.json?limit=100`
+   - Same interval logic on `subreddit` table
 
 ## Commands
 ```bash
-cp .env.example .env          # configure DB + proxies
-docker compose up -d          # PostgreSQL
-npm install                   # root workspaces
-npm run dev                   # backend + frontend
+docker compose up -d && npm install && npm run dev
 ```
 
 ## API
-- `GET /api/status` — scrape status, proxy health, recent runs
-- `GET /api/posts?keyword=&page=&limit=` — filter last 30 days (ILIKE on title, subreddit, search_query, author)
-- `POST /api/scrape/run` — trigger scrape manually
-- `GET /api/archives` — list daily ZIP archives
-
-## Scraper behavior
-- Cron every `SCRAPE_INTERVAL_MINUTES` (default 15)
-- Queries from `DEFAULT_SEARCH_QUERIES` (comma-separated)
-- Rotates SOCKS5 proxy per query; upserts by `reddit_id`
-- Daily archive job at 02:00 removes DB rows older than retention
-
-## When extending
-- Keep proxy rotation in `backend/src/services/proxyPool.js`
-- Do not store secrets in git; use `.env`
-- Respect Reddit rate limits (max 3 pages per query per run)
+- `GET /api/status` — workers, global interval, counts
+- `GET /api/posts?keyword=` — search last N days
+- `GET /api/subreddits` — tracked subreddits
+- `POST /api/scrape/run` — trigger post scrape

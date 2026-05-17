@@ -31,9 +31,7 @@ export function createRedditClient(proxyUrl) {
 export async function checkProxyHealth(proxyUrl) {
   try {
     const client = createRedditClient(proxyUrl);
-    await client.get('https://www.reddit.com/search.json', {
-      params: { q: 'test', limit: 1 },
-    });
+    await client.get('https://www.reddit.com/new.json', { params: { limit: 1 } });
     return true;
   } catch {
     return false;

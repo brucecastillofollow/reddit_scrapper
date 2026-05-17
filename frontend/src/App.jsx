@@ -5,6 +5,12 @@ function formatDate(iso) {
   return new Date(iso).toLocaleString();
 }
 
+function postUrl(permalink) {
+  if (!permalink) return '#';
+  if (permalink.startsWith('http')) return permalink;
+  return `https://www.reddit.com${permalink}`;
+}
+
 export default function App() {
   const [status, setStatus] = useState(null);
   const [keyword, setKeyword] = useState('');
@@ -66,43 +72,71 @@ export default function App() {
   };
 
   const totalPages = Math.max(1, Math.ceil(posts.total / posts.page_size));
+  const running = status?.posts_running || status?.comments_running;
 
   return (
     <>
       <h1>Reddit Scraper</h1>
       <p className="subtitle">
-        Last {status?.retention_days ?? 30} days in PostgreSQL · older data archived as daily ZIP
+        Posts from new.json · comments from r/subreddit/comments.json · last{' '}
+        {status?.retention_days ?? 30} days searchable
       </p>
 
       {error && <div className="error-banner">{error}</div>}
-      {status?.last_error && (
-        <div className="error-banner">Last scrape error: {status.last_error}</div>
+      {(status?.last_post_error || status?.last_comment_error) && (
+        <div className="error-banner">
+          {status.last_post_error && <div>Posts: {status.last_post_error}</div>}
+          {status.last_comment_error && <div>Comments: {status.last_comment_error}</div>}
+        </div>
       )}
 
       <section className="grid">
         <div className="card">
-          <h2>Scrape status</h2>
+          <h2>Post scraper</h2>
           <p className="value">
-            <span className={`badge ${status?.is_running ? 'running' : 'idle'}`}>
-              {status?.is_running ? 'Running' : 'Idle'}
+            <span className={`badge ${status?.posts_running ? 'running' : 'idle'}`}>
+              {status?.posts_running ? 'Running' : 'Idle'}
             </span>
           </p>
           <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
-            Last run: {formatDate(status?.last_finished_at)}
+            Last: {formatDate(status?.last_post_finished_at)}
           </p>
           <button
             type="button"
             style={{ marginTop: '1rem' }}
             onClick={triggerScrape}
-            disabled={status?.is_running}
+            disabled={status?.posts_running}
           >
-            Run scrape now
+            Run post scrape
           </button>
         </div>
 
         <div className="card">
-          <h2>Posts in database</h2>
-          <p className="value">{status?.total_posts_in_db?.toLocaleString() ?? '—'}</p>
+          <h2>Comment scraper</h2>
+          <p className="value">
+            <span className={`badge ${status?.comments_running ? 'running' : 'idle'}`}>
+              {status?.comments_running ? 'Running' : 'Idle'}
+            </span>
+          </p>
+          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            {status?.subreddit_count ?? 0} subreddits tracked
+          </p>
+        </div>
+
+        <div className="card">
+          <h2>Database</h2>
+          <p className="value">{status?.total_posts_in_db?.toLocaleString() ?? '—'} posts</p>
+          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            {status?.total_comments_in_db?.toLocaleString() ?? '—'} comments
+          </p>
+        </div>
+
+        <div className="card">
+          <h2>Global interval</h2>
+          <p className="value">{status?.global?.interval_seconds ?? '—'}s</p>
+          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Last post ts: {formatDate(status?.global?.last_timestamp)}
+          </p>
         </div>
 
         <div className="card">
@@ -110,33 +144,19 @@ export default function App() {
           <p className="value">
             {status?.proxies_healthy ?? 0} / {status?.proxies_configured ?? 0} healthy
           </p>
-          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
-            Active index: {status?.active_proxy_index ?? 0}
-          </p>
-        </div>
-
-        <div className="card">
-          <h2>Schedule</h2>
-          <p className="value">Every {status?.scrape_interval_minutes ?? 15} min</p>
-          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
-            Queries: {(status?.search_queries ?? []).join(', ') || '—'}
-          </p>
         </div>
       </section>
 
-      {status?.recent_runs?.length > 0 && (
+      {status?.recent_subreddits?.length > 0 && (
         <section className="card" style={{ marginBottom: '2rem' }}>
-          <h2>Recent runs</h2>
+          <h2>Recent subreddit polls</h2>
           <ul className="runs-list">
-            {status.recent_runs.map((run) => (
-              <li key={run.id}>
+            {status.recent_subreddits.map((s) => (
+              <li key={s.name}>
                 <span>
-                  <strong>{run.query}</strong> — {run.posts_inserted} new / {run.posts_fetched}{' '}
-                  fetched
+                  r/{s.name} — interval {s.interval_seconds}s
                 </span>
-                <span className={`badge ${run.status === 'success' ? 'idle' : 'error'}`}>
-                  {run.status}
-                </span>
+                <span className="badge idle">{formatDate(s.last_poll_at)}</span>
               </li>
             ))}
           </ul>
@@ -147,7 +167,7 @@ export default function App() {
         <form className="search-bar" onSubmit={onSearch}>
           <input
             type="search"
-            placeholder="Filter by keyword (title, subreddit, query, author)…"
+            placeholder="Filter posts by keyword (title, subreddit, author, body)…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -172,6 +192,7 @@ export default function App() {
         <p style={{ color: 'var(--muted)', marginBottom: '1rem', fontSize: '0.9rem' }}>
           {posts.total.toLocaleString()} result{posts.total !== 1 ? 's' : ''}
           {keyword ? ` for “${keyword}”` : ''} (last {posts.retention_days ?? 30} days)
+          {running ? ' · scraping…' : ''}
         </p>
 
         {loadingPosts ? (
@@ -192,9 +213,9 @@ export default function App() {
                 </thead>
                 <tbody>
                   {posts.items.map((p) => (
-                    <tr key={p.id}>
+                    <tr key={p.data_id}>
                       <td className="title-cell">
-                        <a href={p.permalink} target="_blank" rel="noreferrer">
+                        <a href={postUrl(p.permalink)} target="_blank" rel="noreferrer">
                           {p.title}
                         </a>
                       </td>

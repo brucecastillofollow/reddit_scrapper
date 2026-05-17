@@ -5,10 +5,9 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 import { config } from './config.js';
-import { initDb, refreshPostCount } from './db.js';
+import { initDb } from './db.js';
 import apiRouter from './routes/api.js';
-import { startScheduler } from './scheduler.js';
-import { runScrapeCycle } from './services/scraper.js';
+import { startScrapeWorkers } from './workers/scrapeWorkers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -25,12 +24,11 @@ app.use((err, _req, res, _next) => {
 
 async function main() {
   await initDb();
-  await refreshPostCount();
-  startScheduler();
+  startScrapeWorkers();
 
   app.listen(config.port, () => {
     console.log(`API http://localhost:${config.port}`);
-    runScrapeCycle().catch((err) => console.error('[initial scrape]', err.message));
+    console.log('Workers: post scraper (new.json) + comment scrapers (r/*/comments.json)');
   });
 }
 
