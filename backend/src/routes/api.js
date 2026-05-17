@@ -45,7 +45,8 @@ router.get('/status', async (_req, res, next) => {
            FROM subreddit
            WHERE last_poll_at IS NULL
               OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
-           ORDER BY last_poll_at NULLS FIRST, next_due_at ASC NULLS FIRST
+           ORDER BY last_poll_at NULLS FIRST,
+                    (last_poll_at + (interval_seconds || ' seconds')::interval) ASC
            LIMIT 15`,
         ),
       ]);

@@ -66,6 +66,13 @@ const DUE_SUBREDDIT_WHERE = `
   OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
 `;
 
+/** Never scraped first, then most overdue (earliest due time). */
+const DUE_SUBREDDIT_ORDER = `
+  ORDER BY
+    last_poll_at NULLS FIRST,
+    (last_poll_at + (interval_seconds || ' seconds')::interval) ASC
+`;
+
 export async function countSubredditsDueForComments() {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS c FROM subreddit WHERE ${DUE_SUBREDDIT_WHERE}`,
@@ -78,7 +85,7 @@ export async function getSubredditsDueForComments(limit) {
     `SELECT name, last_timestamp, interval_seconds, last_poll_at
      FROM subreddit
      WHERE ${DUE_SUBREDDIT_WHERE}
-     ORDER BY last_poll_at NULLS FIRST
+     ${DUE_SUBREDDIT_ORDER}
      LIMIT $1`,
     [limit],
   );
@@ -90,7 +97,7 @@ export async function getAllSubredditsDueForComments() {
     `SELECT name, last_timestamp, interval_seconds, last_poll_at
      FROM subreddit
      WHERE ${DUE_SUBREDDIT_WHERE}
-     ORDER BY last_poll_at NULLS FIRST`,
+     ${DUE_SUBREDDIT_ORDER}`,
   );
   return rows;
 }

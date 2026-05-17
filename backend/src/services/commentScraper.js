@@ -9,6 +9,7 @@ import {
   globalIdExists,
   insertGlobalId,
   insertComment,
+  updateComment,
   updateSubreddit,
 } from './entityStore.js';
 
