@@ -1,0 +1,38 @@
+---
+description: Reddit scraper monorepo — Express backend, Vite React frontend, PostgreSQL
+alwaysApply: true
+---
+
+# Reddit Scraper Service
+
+## Stack
+- **Backend**: Node.js, Express (`backend/`), port 3001
+- **Frontend**: Vite + React (`frontend/`), port 5173, proxies `/api` → backend
+- **DB**: PostgreSQL — holds posts from the **last 30 days** only
+- **Archives**: Posts older than 30 days → one JSON file per day → ZIP in `ARCHIVE_DIR`
+- **Proxies**: 4 SOCKS5 URLs (`PROXY_1`…`PROXY_4`) rotate for `https://www.reddit.com/search.json`
+
+## Commands
+```bash
+cp .env.example .env          # configure DB + proxies
+docker compose up -d          # PostgreSQL
+npm install                   # root workspaces
+npm run dev                   # backend + frontend
+```
+
+## API
+- `GET /api/status` — scrape status, proxy health, recent runs
+- `GET /api/posts?keyword=&page=&limit=` — filter last 30 days (ILIKE on title, subreddit, search_query, author)
+- `POST /api/scrape/run` — trigger scrape manually
+- `GET /api/archives` — list daily ZIP archives
+
+## Scraper behavior
+- Cron every `SCRAPE_INTERVAL_MINUTES` (default 15)
+- Queries from `DEFAULT_SEARCH_QUERIES` (comma-separated)
+- Rotates SOCKS5 proxy per query; upserts by `reddit_id`
+- Daily archive job at 02:00 removes DB rows older than retention
+
+## When extending
+- Keep proxy rotation in `backend/src/services/proxyPool.js`
+- Do not store secrets in git; use `.env`
+- Respect Reddit rate limits (max 3 pages per query per run)
