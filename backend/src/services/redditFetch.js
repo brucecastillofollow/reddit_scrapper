@@ -1,15 +1,15 @@
 import { createRedditClient, getNextEndpoint } from './proxyPool.js';
 import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
-export async function fetchRedditJson(url, params = {}, meta = {}) {
-  const endpoint = getNextEndpoint();
-  const client = createRedditClient(endpoint);
+export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = null) {
+  const ep = endpoint ?? getNextEndpoint();
+  const client = createRedditClient(ep);
 
   try {
     const { data } = await client.get(url, { params });
-    return { data, proxyIndex: endpoint.index, endpoint };
+    return { data, proxyIndex: ep.index, endpoint: ep };
   } catch (err) {
-    const proxyInfo = describeEndpoint(endpoint);
+    const proxyInfo = describeEndpoint(ep);
     await logScrapeFailure({
       kind: meta.kind || 'fetch',
       target: meta.target || url,
@@ -20,7 +20,7 @@ export async function fetchRedditJson(url, params = {}, meta = {}) {
       error: err.message,
       status: err.response?.status ?? null,
     });
-    throw enrichError(err, endpoint);
+    throw enrichError(err, ep);
   }
 }
 

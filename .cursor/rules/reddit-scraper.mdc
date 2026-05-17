@@ -26,8 +26,10 @@ alwaysApply: true
    - Upsert `posts`, register `global_ids`, auto-add `subreddit` (now−10min, 600s interval)
    - All new in batch → paginate `?before={after}` until existing found → **shorten** global interval
    - >50 existing in batch → **lengthen** global interval
-2. **Comment workers** (parallel, `COMMENT_CONCURRENCY`): `https://www.reddit.com/r/{name}/comments.json?limit=100`
-   - Same interval logic on `subreddit` table
+2. **Comment workers** (1 per proxy + direct): task queue + coordinator enqueues due subreddits
+   - Each worker uses its own endpoint; `https://www.reddit.com/r/{name}/comments.json?limit=100`
+   - On error: re-queue task + sleep `COMMENT_IDLE_SLEEP_SECONDS` (default 10s)
+   - Empty queue: sleep 10s
 
 ## Commands
 ```bash

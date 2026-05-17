@@ -2,16 +2,19 @@ import { getGlobal } from '../db.js';
 import { updateScrapeStatus } from '../db.js';
 import { countHealthyProxies } from '../services/proxyPool.js';
 import { runPostScrape } from '../services/postScraper.js';
-import { runCommentScrapeBatch } from '../services/commentScraper.js';
+import { startCommentWorkerPool, getCommentWorkerStats } from './commentWorkerPool.js';
 import { errorMessageWithProxy, logScrapeFailureFromError } from '../services/scrapeLogger.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let postRunning = false;
-let commentRunning = false;
 
 export function isPostScrapeRunning() {
   return postRunning;
+}
+
+export function getCommentQueueStatus() {
+  return getCommentWorkerStats();
 }
 
 /** Single post-scrape loop (dedicated async worker). */
@@ -52,34 +55,6 @@ async function postWorkerLoop() {
   }
 }
 
-/** Comment-scrape pool: processes due subreddits concurrently. */
-async function commentWorkerLoop() {
-  while (true) {
-    try {
-      if (commentRunning) {
-        await sleep(20);
-        continue;
-      }
-
-      commentRunning = true;
-      await updateScrapeStatus({ comments_running: true, last_comment_error: null });
-      await runCommentScrapeBatch();
-    } catch (err) {
-      await logScrapeFailureFromError('comments', err, { target: 'comment-batch' });
-      const msg = errorMessageWithProxy(err);
-      console.error('[comment-worker]', msg);
-      await updateScrapeStatus({
-        last_comment_error: msg,
-        last_comment_finished_at: new Date(),
-      });
-    } finally {
-      commentRunning = false;
-      await updateScrapeStatus({ comments_running: false });
-      await sleep(3000);
-    }
-  }
-}
-
 async function proxyHealthLoop() {
   while (true) {
     try {
@@ -94,9 +69,9 @@ async function proxyHealthLoop() {
 
 export function startScrapeWorkers() {
   postWorkerLoop().catch((err) => console.error('[post-worker] fatal', err));
-  commentWorkerLoop().catch((err) => console.error('[comment-worker] fatal', err));
+  startCommentWorkerPool();
   proxyHealthLoop().catch(() => {});
-  console.log('Scrape workers started: 1 post loop + 1 comment pool loop');
+  console.log('Scrape workers started: 1 post loop + comment coordinator/worker pool');
 }
 
 export async function triggerPostScrape() {

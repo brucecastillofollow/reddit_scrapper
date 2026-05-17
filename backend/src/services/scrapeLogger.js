@@ -52,23 +52,45 @@ export function formatProxyForMessage(proxyInfo) {
   return proxyInfo.env_key || `endpoint_index=${proxyInfo.index}`;
 }
 
-export async function logScrapeFailure(entry) {
+async function appendJsonLog(logPath, tag, entry, { useConsoleError = false } = {}) {
   const record = {
     at: new Date().toISOString(),
     ...entry,
   };
   const line = JSON.stringify(record);
-  console.error(`[scrape-fail] ${line}`);
+  const logFn = useConsoleError ? console.error : console.log;
+  logFn(`[${tag}] ${line}`);
 
   try {
-    const logPath = config.scrapeFailureLog;
     await fs.mkdir(path.dirname(logPath), { recursive: true });
     await fs.appendFile(logPath, `${line}\n`, 'utf8');
   } catch (err) {
-    console.error('[scrape-fail] could not write log file:', err.message);
+    console.error(`[${tag}] could not write log file:`, err.message);
   }
 
   return record;
+}
+
+export async function logScrapeFailure(entry) {
+  return appendJsonLog(config.scrapeFailureLog, 'scrape-fail', entry, { useConsoleError: true });
+}
+
+export async function logCommentScrapeTiming(entry) {
+  const durationMs = entry.duration_ms ?? 0;
+  const summary = {
+    subreddit: entry.subreddit,
+    duration_ms: durationMs,
+    duration_s: Number((durationMs / 1000).toFixed(3)),
+    success: entry.success ?? true,
+    ...entry,
+  };
+  console.log(
+    `[comment-timing] r/${summary.subreddit} ${summary.duration_s}s` +
+      (summary.success
+        ? ` new=${summary.comments_new ?? 0} existing=${summary.comments_existing ?? 0} pages=${summary.pages ?? 1}`
+        : ` FAILED: ${summary.error}`),
+  );
+  return appendJsonLog(config.scrapeCommentTimingLog, 'comment-timing', summary);
 }
 
 export async function logScrapeFailureFromError(kind, err, extra = {}) {

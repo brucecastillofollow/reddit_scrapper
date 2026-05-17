@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { pool, getGlobal, getScrapeStatus } from '../db.js';
 import { config } from '../config.js';
 import { getProxyCount, getPoolSummary } from '../services/proxyPool.js';
-import { isPostScrapeRunning, triggerPostScrape } from '../workers/scrapeWorkers.js';
+import { isPostScrapeRunning, getCommentQueueStatus, triggerPostScrape } from '../workers/scrapeWorkers.js';
 
 const router = Router();
 
@@ -16,10 +16,41 @@ router.get('/status', async (_req, res, next) => {
       pool.query('SELECT COUNT(*)::int AS c FROM subreddit'),
     ]);
 
-    const { rows: recentSubs } = await pool.query(
-      `SELECT name, last_timestamp, interval_seconds, last_poll_at
-       FROM subreddit ORDER BY last_poll_at DESC NULLS LAST LIMIT 10`,
-    );
+    const [{ rows: subStatsRows }, { rows: recentSubs }, { rows: waitingSubs }] =
+      await Promise.all([
+        pool.query(`
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE last_poll_at IS NOT NULL)::int AS scraped_once,
+          COUNT(*) FILTER (
+            WHERE last_poll_at IS NULL
+               OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+          )::int AS waiting,
+          COUNT(*) FILTER (
+            WHERE last_poll_at IS NOT NULL
+              AND last_poll_at + (interval_seconds || ' seconds')::interval > NOW()
+          )::int AS scheduled
+        FROM subreddit
+      `),
+        pool.query(
+          `SELECT name, last_timestamp, interval_seconds, last_poll_at
+           FROM subreddit ORDER BY last_poll_at DESC NULLS LAST LIMIT 10`,
+        ),
+        pool.query(
+          `SELECT name, last_timestamp, interval_seconds, last_poll_at,
+                  CASE
+                    WHEN last_poll_at IS NULL THEN NULL
+                    ELSE last_poll_at + (interval_seconds || ' seconds')::interval
+                  END AS next_due_at
+           FROM subreddit
+           WHERE last_poll_at IS NULL
+              OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+           ORDER BY last_poll_at NULLS FIRST, next_due_at ASC NULLS FIRST
+           LIMIT 15`,
+        ),
+      ]);
+
+    const subStats = subStatsRows[0];
 
     res.json({
       posts_running: status?.posts_running ?? false,
@@ -31,6 +62,15 @@ router.get('/status', async (_req, res, next) => {
       total_posts_in_db: Number(postsCount.rows[0].c),
       total_comments_in_db: Number(commentsCount.rows[0].c),
       subreddit_count: subredditCount.rows[0].c,
+      subreddit_comments: {
+        total: subStats.total,
+        scraped_once: subStats.scraped_once,
+        waiting: subStats.waiting,
+        scheduled: subStats.scheduled,
+        never_scraped: subStats.total - subStats.scraped_once,
+      },
+      waiting_subreddits: waitingSubs,
+      comment_queue: getCommentQueueStatus(),
       global: {
         last_timestamp: global?.last_timestamp ?? null,
         interval_seconds: global?.interval_seconds ?? null,
@@ -117,7 +157,16 @@ router.post('/scrape/run', async (_req, res, next) => {
 router.get('/subreddits', async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT name, last_timestamp, interval_seconds, last_poll_at
+      `SELECT name, last_timestamp, interval_seconds, last_poll_at,
+              CASE
+                WHEN last_poll_at IS NULL THEN 'waiting'
+                WHEN last_poll_at + (interval_seconds || ' seconds')::interval <= NOW() THEN 'waiting'
+                ELSE 'scheduled'
+              END AS scrape_status,
+              CASE
+                WHEN last_poll_at IS NULL THEN NULL
+                ELSE last_poll_at + (interval_seconds || ' seconds')::interval
+              END AS next_due_at
        FROM subreddit ORDER BY name`,
     );
     res.json({ items: rows });

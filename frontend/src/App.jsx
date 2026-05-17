@@ -118,8 +118,22 @@ export default function App() {
               {status?.comments_running ? 'Running' : 'Idle'}
             </span>
           </p>
-          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
-            {status?.subreddit_count ?? 0} subreddits tracked
+          <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            {status?.subreddit_comments?.scraped_once ?? 0} scraped at least once
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+            {status?.subreddit_comments?.waiting ?? 0} waiting ·{' '}
+            {status?.subreddit_comments?.scheduled ?? 0} not due yet
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+            {status?.subreddit_count ?? 0} total tracked
+            {(status?.subreddit_comments?.never_scraped ?? 0) > 0 &&
+              ` (${status.subreddit_comments.never_scraped} never scraped)`}
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Queue: {status?.comment_queue?.queued ?? 0} waiting ·{' '}
+            {status?.comment_queue?.in_flight ?? 0} in flight ·{' '}
+            {status?.comment_queue?.workers ?? 0} workers
           </p>
         </div>
 
@@ -147,9 +161,45 @@ export default function App() {
         </div>
       </section>
 
+      <section className="grid" style={{ marginBottom: '2rem' }}>
+        <div className="card">
+          <h2>Comment scrape queue</h2>
+          <p className="value">{status?.subreddit_comments?.waiting ?? '—'}</p>
+          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Due now (last poll + interval passed, or never polled)
+          </p>
+        </div>
+        <div className="card">
+          <h2>Comment scraped once+</h2>
+          <p className="value">{status?.subreddit_comments?.scraped_once ?? '—'}</p>
+          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Of {status?.subreddit_comments?.total ?? 0} tracked subreddits
+          </p>
+        </div>
+      </section>
+
+      {status?.waiting_subreddits?.length > 0 && (
+        <section className="card" style={{ marginBottom: '2rem' }}>
+          <h2>Waiting for comment scrape</h2>
+          <ul className="runs-list">
+            {status.waiting_subreddits.map((s) => (
+              <li key={s.name}>
+                <span>
+                  r/{s.name} — every {s.interval_seconds}s
+                  {s.last_poll_at
+                    ? ` · last ${formatDate(s.last_poll_at)}`
+                    : ' · never scraped'}
+                </span>
+                <span className="badge running">waiting</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {status?.recent_subreddits?.length > 0 && (
         <section className="card" style={{ marginBottom: '2rem' }}>
-          <h2>Recent subreddit polls</h2>
+          <h2>Recently polled</h2>
           <ul className="runs-list">
             {status.recent_subreddits.map((s) => (
               <li key={s.name}>

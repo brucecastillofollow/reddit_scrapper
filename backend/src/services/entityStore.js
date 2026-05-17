@@ -61,15 +61,36 @@ export async function updateComment(row) {
   await updateRow('comments', row);
 }
 
+const DUE_SUBREDDIT_WHERE = `
+  last_poll_at IS NULL
+  OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+`;
+
+export async function countSubredditsDueForComments() {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM subreddit WHERE ${DUE_SUBREDDIT_WHERE}`,
+  );
+  return rows[0].c;
+}
+
 export async function getSubredditsDueForComments(limit) {
   const { rows } = await pool.query(
     `SELECT name, last_timestamp, interval_seconds, last_poll_at
      FROM subreddit
-     WHERE last_poll_at IS NULL
-        OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+     WHERE ${DUE_SUBREDDIT_WHERE}
      ORDER BY last_poll_at NULLS FIRST
      LIMIT $1`,
     [limit],
+  );
+  return rows;
+}
+
+export async function getAllSubredditsDueForComments() {
+  const { rows } = await pool.query(
+    `SELECT name, last_timestamp, interval_seconds, last_poll_at
+     FROM subreddit
+     WHERE ${DUE_SUBREDDIT_WHERE}
+     ORDER BY last_poll_at NULLS FIRST`,
   );
   return rows;
 }
