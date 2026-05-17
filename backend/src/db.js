@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { config } from './config.js';
+import { buildPostsSchemaSql, buildCommentsSchemaSql } from './schema/redditFields.js';
 
 const { Pool } = pg;
 
@@ -8,41 +9,9 @@ export const pool = new Pool({ connectionString: config.databaseUrl });
 const SCHEMA = `
 DROP TABLE IF EXISTS reddit_posts, scrape_runs, archive_records CASCADE;
 
-CREATE TABLE IF NOT EXISTS posts (
-  data_id VARCHAR(20) PRIMARY KEY,
-  fullname VARCHAR(24) UNIQUE NOT NULL,
-  subreddit VARCHAR(128) NOT NULL,
-  created_utc TIMESTAMPTZ NOT NULL,
-  title TEXT,
-  author TEXT,
-  score INTEGER DEFAULT 0,
-  num_comments INTEGER DEFAULT 0,
-  selftext TEXT,
-  url TEXT,
-  permalink TEXT,
-  raw_data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+${buildPostsSchemaSql()}
 
-CREATE INDEX IF NOT EXISTS ix_posts_subreddit ON posts (subreddit);
-CREATE INDEX IF NOT EXISTS ix_posts_created ON posts (created_utc);
-
-CREATE TABLE IF NOT EXISTS comments (
-  data_id VARCHAR(20) PRIMARY KEY,
-  fullname VARCHAR(24) UNIQUE NOT NULL,
-  subreddit VARCHAR(128) NOT NULL,
-  link_id VARCHAR(24),
-  parent_id VARCHAR(24),
-  created_utc TIMESTAMPTZ NOT NULL,
-  author TEXT,
-  body TEXT,
-  score INTEGER DEFAULT 0,
-  raw_data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS ix_comments_subreddit ON comments (subreddit);
-CREATE INDEX IF NOT EXISTS ix_comments_created ON comments (created_utc);
+${buildCommentsSchemaSql()}
 
 CREATE TABLE IF NOT EXISTS subreddit (
   name VARCHAR(128) PRIMARY KEY,

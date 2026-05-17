@@ -1,16 +1,11 @@
+import './loadEnv.js';
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
 
 import { config } from './config.js';
 import { initDb } from './db.js';
 import apiRouter from './routes/api.js';
 import { startScrapeWorkers } from './workers/scrapeWorkers.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const app = express();
 app.use(cors());

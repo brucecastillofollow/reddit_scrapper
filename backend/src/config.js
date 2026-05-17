@@ -1,3 +1,5 @@
+import './loadEnv.js';
+
 const num = (v, fallback) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -16,10 +18,19 @@ export const config = {
   existingThreshold: num(process.env.EXISTING_THRESHOLD, 50),
   maxPaginationPages: num(process.env.MAX_PAGINATION_PAGES, 20),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
-  proxies: [
-    process.env.PROXY_1,
-    process.env.PROXY_2,
-    process.env.PROXY_3,
-    process.env.PROXY_4,
-  ].filter((p) => p && p.trim()),
+  proxies: loadProxies(),
 };
+
+function loadProxies() {
+  const list = (process.env.PROXY_LIST || '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (list.length > 0) return list;
+
+  return Object.keys(process.env)
+    .filter((k) => /^PROXY_\d+$/i.test(k))
+    .sort((a, b) => Number(a.split('_')[1]) - Number(b.split('_')[1]))
+    .map((k) => process.env[k]?.trim())
+    .filter(Boolean);
+}

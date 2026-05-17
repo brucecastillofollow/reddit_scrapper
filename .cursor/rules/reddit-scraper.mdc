@@ -14,8 +14,8 @@ alwaysApply: true
 ## Database tables
 | Table | Purpose |
 |-------|---------|
-| `posts` | Post data from `new.json` (typed cols + `raw_data` JSONB) |
-| `comments` | Comment data from `r/{sub}/comments.json` |
+| `posts` | One column per Reddit t3 field + `note` JSONB for future keys |
+| `comments` | One column per Reddit t1 field + `note` JSONB for future keys |
 | `subreddit` | `name`, `last_timestamp`, `interval_seconds` — comment scrape schedule |
 | `global` | Singleton: post scrape `last_timestamp`, `interval_seconds` |
 | `global_ids` | `type` (t3/t1), `data_id`, `timestamp` — dedup registry |
