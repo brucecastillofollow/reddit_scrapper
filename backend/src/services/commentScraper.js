@@ -3,6 +3,7 @@ import { updateScrapeStatus } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
 import { logCommentScrapeTiming } from './scrapeLogger.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
+import { toUtcDate, isAtOrBeforeUtc, utcCommentCutoff, utcNow } from './scrapeBounds.js';
 import {
   typedFieldsFromComment,
   commentExists,
@@ -23,43 +24,65 @@ const fetchMeta = (name) => ({
   subreddit: name,
 });
 
-async function processCommentChild(child, stats, newestTs) {
+function createCommentScrapeContext() {
+  return {
+    cutoff: utcCommentCutoff(),
+    stopped: false,
+    stopReason: null,
+  };
+}
+
+async function processCommentChild(child, stats, newestTs, ctx) {
   if (child.kind !== 't1' || !child.data?.id) return newestTs;
+  if (ctx.stopped) return newestTs;
 
   const d = child.data;
   const type = 't1';
   const dataId = String(d.id);
   const fields = typedFieldsFromComment(d);
-  let latest = newestTs;
+  const createdUtc = toUtcDate(fields.created_utc);
 
-  if (!newestTs || fields.created_utc > newestTs) {
-    latest = fields.created_utc;
+  if (isAtOrBeforeUtc(createdUtc, ctx.cutoff)) {
+    ctx.stopped = true;
+    ctx.stopReason = 'cutoff';
+    return newestTs;
+  }
+
+  let latest = newestTs;
+  if (!newestTs || createdUtc > newestTs) {
+    latest = createdUtc;
   }
 
   if (!(await globalIdExists(type, dataId))) {
-    await insertGlobalId(type, dataId, fields.created_utc);
+    await insertGlobalId(type, dataId, createdUtc);
   }
 
-  if (await commentExists(dataId)) {
+  const exists = await commentExists(dataId);
+
+  if (exists) {
     await updateComment(fields);
     stats.existing += 1;
-  } else {
-    await insertComment(fields);
-    stats.new += 1;
+    stats.total += 1;
+    ctx.stopped = true;
+    ctx.stopReason = 'existing';
+    return latest;
   }
 
+  await insertComment(fields);
+  stats.new += 1;
+  stats.total += 1;
   return latest;
 }
 
-async function processListing(listing, stats) {
+async function processListing(listing, stats, ctx) {
   const children = listing?.data?.children ?? [];
   let newestTs = null;
 
   for (const child of children) {
-    newestTs = await processCommentChild(child, stats, newestTs);
+    if (ctx.stopped) break;
+    newestTs = await processCommentChild(child, stats, newestTs, ctx);
   }
 
-  stats.total += children.filter((c) => c.kind === 't1').length;
   return {
     after: listing?.data?.after ?? null,
     reddit_dist: listing?.data?.dist ?? children.length,
@@ -71,8 +94,9 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
   const { name, last_timestamp, interval_seconds: currentInterval } = subRow;
   const startedAt = Date.now();
   const stats = { new: 0, existing: 0, total: 0 };
-  let newestTs = last_timestamp ? new Date(last_timestamp) : null;
-  let pages = 1;
+  const ctx = createCommentScrapeContext();
+  let newestTs = last_timestamp ? toUtcDate(last_timestamp) : null;
+  let pages = 0;
 
   try {
     let { data: listing } = await fetchRedditJson(
@@ -82,9 +106,24 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       endpoint,
     );
 
-    let meta = await processListing(listing, stats);
+    pages = 1;
+    let meta = await processListing(listing, stats, ctx);
     if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
       newestTs = meta.newestTs;
+    }
+
+    while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
+      ({ data: listing } = await fetchRedditJson(
+        commentsUrl(name),
+        { limit: 100, before: meta.after },
+        fetchMeta(name),
+        endpoint,
+      ));
+      pages += 1;
+      meta = await processListing(listing, stats, ctx);
+      if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
+        newestTs = meta.newestTs;
+      }
     }
 
     const { allNew, mostlyExisting } = shouldAdjustInterval(
@@ -95,40 +134,17 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
 
     let intervalSeconds = currentInterval;
 
-    if (allNew && meta.after) {
-      let before = meta.after;
-      let extraPages = 0;
-      while (before && extraPages < config.maxPaginationPages) {
-        ({ data: listing } = await fetchRedditJson(
-          commentsUrl(name),
-          { limit: 100, before },
-          fetchMeta(name),
-          endpoint,
-        ));
-        const pageStats = { new: 0, existing: 0, total: 0 };
-        meta = await processListing(listing, pageStats);
-        stats.new += pageStats.new;
-        stats.existing += pageStats.existing;
-        stats.total += pageStats.total;
-
-        if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
-          newestTs = meta.newestTs;
-        }
-
-        if (pageStats.existing > 0) break;
-        before = meta.after;
-        extraPages += 1;
-        pages += 1;
-      }
+    if (allNew && meta.after && !ctx.stopped) {
       intervalSeconds = shortenInterval(intervalSeconds);
     } else if (mostlyExisting) {
       intervalSeconds = lengthenInterval(intervalSeconds);
     }
 
+    const pollAt = utcNow();
     await updateSubreddit(name, {
       last_timestamp: newestTs || last_timestamp,
       interval_seconds: intervalSeconds,
-      last_poll_at: new Date(),
+      last_poll_at: pollAt,
     });
 
     const durationMs = Date.now() - startedAt;
@@ -141,6 +157,8 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       comments_total: stats.total,
       reddit_dist: meta.reddit_dist,
       pages,
+      stop_reason: ctx.stopReason,
+      cutoff_utc: ctx.cutoff.toISOString(),
       interval_seconds: intervalSeconds,
       proxy_id: endpoint.id,
       proxy_index: endpoint.index,
@@ -148,11 +166,11 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
 
     await updateScrapeStatus({
       active_proxy_index: endpoint.index,
-      last_comment_finished_at: new Date(),
+      last_comment_finished_at: pollAt,
       last_comment_error: null,
     });
 
-    return { name, stats, intervalSeconds, durationMs, pages, endpoint };
+    return { name, stats, intervalSeconds, durationMs, pages, endpoint, stopReason: ctx.stopReason };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     await logCommentScrapeTiming({

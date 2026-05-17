@@ -87,7 +87,8 @@ export async function logCommentScrapeTiming(entry) {
   console.log(
     `[comment-timing] r/${summary.subreddit} ${summary.duration_s}s` +
       (summary.success
-        ? ` new=${summary.comments_new ?? 0} existing=${summary.comments_existing ?? 0} pages=${summary.pages ?? 1}`
+        ? ` new=${summary.comments_new ?? 0} existing=${summary.comments_existing ?? 0} pages=${summary.pages ?? 1}` +
+            (summary.stop_reason ? ` stop=${summary.stop_reason}` : '')
         : ` FAILED: ${summary.error}`),
   );
   return appendJsonLog(config.scrapeCommentTimingLog, 'comment-timing', summary);

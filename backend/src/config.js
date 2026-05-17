@@ -25,6 +25,7 @@ export const config = {
   intervalGrowFactor: Number(process.env.INTERVAL_GROW_FACTOR) || 1.5,
   existingThreshold: num(process.env.EXISTING_THRESHOLD, 50),
   maxPaginationPages: num(process.env.MAX_PAGINATION_PAGES, 20),
+  commentLookbackDays: num(process.env.COMMENT_LOOKBACK_DAYS, 30),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
   commentIdleSleepSeconds: num(process.env.COMMENT_IDLE_SLEEP_SECONDS, 10),
   useDirect: bool(process.env.USE_DIRECT, true),
