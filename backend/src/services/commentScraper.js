@@ -120,7 +120,7 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
         ({ data: listing } = await fetchRedditJson(
           commentsUrl(name),
-          { limit: 100, before: meta.after },
+          { limit: 100, after: meta.after },
           fetchMeta(name),
           endpoint,
         ));

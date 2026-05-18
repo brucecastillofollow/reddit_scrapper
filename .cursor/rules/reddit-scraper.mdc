@@ -24,7 +24,7 @@ alwaysApply: true
 ## Scraping workers
 1. **Post worker** (single loop): `https://www.reddit.com/new.json`
    - Upsert `posts`, register `global_ids`, auto-add `subreddit` (`last_timestamp` NULL, 600s interval)
-   - All new in batch → paginate `?before={after}` until existing found → **shorten** global interval
+   - All new in batch → paginate `?after={after}` until existing found → **shorten** global interval
    - >50 existing in batch → **lengthen** global interval
 2. **Comment workers** (1 per proxy + direct): task queue + coordinator enqueues due subreddits
    - Each worker uses its own endpoint; `https://www.reddit.com/r/{name}/comments.json?limit=100`

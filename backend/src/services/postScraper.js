@@ -106,7 +106,7 @@ export async function runPostScrape() {
   }
 
   while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
-    ({ data: listing, proxyIndex: pi } = await fetchNewPage({ before: meta.after }));
+    ({ data: listing, proxyIndex: pi } = await fetchNewPage({ after: meta.after }));
     proxyIndex = pi;
     pages += 1;
     meta = await processListing(listing, stats, ctx);
