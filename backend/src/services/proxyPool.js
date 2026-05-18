@@ -13,6 +13,38 @@ let index = 0;
 /** @type {Map<string, { total: number, success: number, failed: number }>} */
 const requestCounts = new Map();
 
+/** @type {Map<string, number>} */
+const lastUsedAt = new Map();
+
+/** @type {Map<string, Promise<unknown>>} */
+const proxyQueues = new Map();
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function enforceProxyCooldown(endpoint) {
+  const seconds = config.proxyCooldownSeconds;
+  if (seconds <= 0) return;
+
+  const id = endpoint?.id ?? 'unknown';
+  const minMs = seconds * 1000;
+  const last = lastUsedAt.get(id) ?? 0;
+  const wait = minMs - (Date.now() - last);
+  if (wait > 0) await sleep(wait);
+  lastUsedAt.set(id, Date.now());
+}
+
+/** Serialize work per proxy and enforce min interval between request starts. */
+export async function runOnProxy(endpoint, fn) {
+  const id = endpoint?.id ?? 'unknown';
+  const prev = proxyQueues.get(id) ?? Promise.resolve();
+  const job = prev.catch(() => {}).then(async () => {
+    await enforceProxyCooldown(endpoint);
+    return fn();
+  });
+  proxyQueues.set(id, job);
+  return job;
+}
+
 function emptyCounts() {
   return { total: 0, success: 0, failed: 0 };
 }
@@ -71,6 +103,8 @@ export function rebuildPool() {
   pool = buildPool();
   index = 0;
   requestCounts.clear();
+  lastUsedAt.clear();
+  proxyQueues.clear();
 }
 
 export function getPool() {
@@ -180,13 +214,15 @@ export function createRedditClient(endpoint) {
 }
 
 export async function checkEndpointHealth(endpoint) {
-  try {
-    const client = createRedditClient(endpoint);
-    await client.get('https://www.reddit.com/new.json', { params: { limit: 1 } });
-    return true;
-  } catch {
-    return false;
-  }
+  return runOnProxy(endpoint, async () => {
+    try {
+      const client = createRedditClient(endpoint);
+      await client.get('https://www.reddit.com/new.json', { params: { limit: 1 } });
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export async function countHealthyProxies() {

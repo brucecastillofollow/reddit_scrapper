@@ -1,7 +1,6 @@
 import { config } from '../config.js';
 import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
-import { sleepBeforeScrape } from './scrapeDelay.js';
 import { logCommentScrapeTiming } from './scrapeLogger.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
 import { toUtcDate, isAtOrBeforeUtc, utcCommentCutoff, utcNow } from './scrapeBounds.js';
@@ -104,8 +103,6 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
   let pages = 0;
 
   try {
-    await sleepBeforeScrape();
-
     let { data: listing } = await fetchRedditJson(
       commentsUrl(name),
       { limit: 100 },

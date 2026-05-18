@@ -98,6 +98,7 @@ router.get('/status', async (_req, res, next) => {
       proxies_configured: getProxyCount(),
       proxy_stats: getPoolStats(),
       use_direct: config.useDirect,
+      proxy_cooldown_seconds: config.proxyCooldownSeconds,
       proxies_healthy: status?.proxies_healthy ?? 0,
       retention_days: config.retentionDays,
       recent_subreddits: recentSubs,

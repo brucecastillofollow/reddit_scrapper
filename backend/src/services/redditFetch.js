@@ -1,29 +1,37 @@
-import { createRedditClient, getNextEndpoint, recordProxyRequest } from './proxyPool.js';
+import {
+  createRedditClient,
+  getNextEndpoint,
+  recordProxyRequest,
+  runOnProxy,
+} from './proxyPool.js';
 import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
 export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = null) {
   const ep = endpoint ?? getNextEndpoint();
-  const client = createRedditClient(ep);
 
-  try {
-    const { data } = await client.get(url, { params });
-    recordProxyRequest(ep, { success: true });
-    return { data, proxyIndex: ep.index, endpoint: ep };
-  } catch (err) {
-    recordProxyRequest(ep, { success: false });
-    const proxyInfo = describeEndpoint(ep);
-    await logScrapeFailure({
-      kind: meta.kind || 'fetch',
-      target: meta.target || url,
-      subreddit: meta.subreddit ?? null,
-      url,
-      params,
-      proxy: proxyInfo,
-      error: err.message,
-      status: err.response?.status ?? null,
-    });
-    throw enrichError(err, ep);
-  }
+  return runOnProxy(ep, async () => {
+    const client = createRedditClient(ep);
+
+    try {
+      const { data } = await client.get(url, { params });
+      recordProxyRequest(ep, { success: true });
+      return { data, proxyIndex: ep.index, endpoint: ep };
+    } catch (err) {
+      recordProxyRequest(ep, { success: false });
+      const proxyInfo = describeEndpoint(ep);
+      await logScrapeFailure({
+        kind: meta.kind || 'fetch',
+        target: meta.target || url,
+        subreddit: meta.subreddit ?? null,
+        url,
+        params,
+        proxy: proxyInfo,
+        error: err.message,
+        status: err.response?.status ?? null,
+      });
+      throw enrichError(err, ep);
+    }
+  });
 }
 
 export function parseFullname(name) {

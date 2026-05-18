@@ -1,7 +1,6 @@
 import { config } from '../config.js';
 import { getGlobal, updateGlobal, updateScrapeStatus, recordPostScrapeRun } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
-import { sleepBeforeScrape } from './scrapeDelay.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
 import { toUtcDate, isAtOrBeforeUtc } from './scrapeBounds.js';
 import {
@@ -90,8 +89,6 @@ async function fetchNewPage(params) {
 }
 
 export async function runPostScrape() {
-  await sleepBeforeScrape();
-
   const global = await getGlobal();
   const stats = { new: 0, existing: 0, total: 0 };
   const ctx = createPostScrapeContext(global);
