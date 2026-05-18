@@ -69,7 +69,7 @@ async function proxyHealthLoop() {
 
 export function startScrapeWorkers() {
   postWorkerLoop().catch((err) => console.error('[post-worker] fatal', err));
-  //startCommentWorkerPool();
+  startCommentWorkerPool();
   proxyHealthLoop().catch(() => {});
   console.log('Scrape workers started: 1 post loop + comment coordinator/worker pool');
 }

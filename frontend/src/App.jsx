@@ -199,7 +199,7 @@ export default function App() {
         <section className="card" style={{ marginBottom: '2rem' }}>
           <h2>Requests per proxy</h2>
           <p style={{ marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
-            Reddit API calls via each endpoint (posts round-robin · comments pinned per worker). Min{' '}
+            Reddit API calls per endpoint (one proxy per post/comment scrape run). Min{' '}
             {status?.proxy_cooldown_seconds ?? 2}s between requests per proxy. Resets on backend restart.
           </p>
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

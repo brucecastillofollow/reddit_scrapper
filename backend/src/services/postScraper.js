@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { getGlobal, updateGlobal, updateScrapeStatus, recordPostScrapeRun } from '../db.js';
+import { getNextEndpoint } from './proxyPool.js';
 import { fetchRedditJson } from './redditFetch.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
 import { toUtcDate, isAtOrBeforeUtc } from './scrapeBounds.js';
@@ -80,24 +81,24 @@ async function processListing(listing, stats, ctx) {
   };
 }
 
-async function fetchNewPage(params) {
+async function fetchNewPage(endpoint, params = {}) {
   return fetchRedditJson(
     NEW_URL,
     { limit: 100, ...params },
     { kind: 'posts', target: 'new.json' },
+    endpoint,
   );
 }
 
 export async function runPostScrape() {
+  const endpoint = getNextEndpoint();
   const global = await getGlobal();
   const stats = { new: 0, existing: 0, total: 0 };
   const ctx = createPostScrapeContext(global);
   let newestTs = global.last_timestamp ? toUtcDate(global.last_timestamp) : null;
-  let proxyIndex = 0;
   let pages = 0;
 
-  let { data: listing, proxyIndex: pi } = await fetchNewPage();
-  proxyIndex = pi;
+  let { data: listing } = await fetchNewPage(endpoint);
   pages = 1;
 
   let meta = await processListing(listing, stats, ctx);
@@ -106,8 +107,7 @@ export async function runPostScrape() {
   }
 
   while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
-    ({ data: listing, proxyIndex: pi } = await fetchNewPage({ after: meta.after }));
-    proxyIndex = pi;
+    ({ data: listing } = await fetchNewPage(endpoint, { after: meta.after }));
     pages += 1;
     meta = await processListing(listing, stats, ctx);
     if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
@@ -145,10 +145,18 @@ export async function runPostScrape() {
 
   await recordPostScrapeRun(stats);
   await updateScrapeStatus({
-    active_proxy_index: proxyIndex,
+    active_proxy_index: endpoint.index,
     last_post_finished_at: pollAt,
     last_post_error: null,
   });
 
-  return { stats, intervalSeconds, allNew, mostlyExisting, pages, stopReason: ctx.stopReason };
+  return {
+    stats,
+    intervalSeconds,
+    allNew,
+    mostlyExisting,
+    pages,
+    stopReason: ctx.stopReason,
+    endpoint,
+  };
 }

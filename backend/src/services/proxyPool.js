@@ -140,6 +140,7 @@ export function getPoolStats() {
   });
 }
 
+/** Round-robin: pick one proxy for an entire scrape run (all pages share it). */
 export function getNextEndpoint() {
   if (pool.length === 0) {
     return {
@@ -153,6 +154,11 @@ export function getNextEndpoint() {
   const endpoint = pool[index % pool.length];
   index += 1;
   return endpoint;
+}
+
+/** @deprecated alias — use getNextEndpoint */
+export function acquireScrapeEndpoint() {
+  return getNextEndpoint();
 }
 
 /** @deprecated use getNextEndpoint */

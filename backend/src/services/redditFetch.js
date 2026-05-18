@@ -6,13 +6,15 @@ import {
 } from './proxyPool.js';
 import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
+/**
+ * Fetch Reddit JSON. Pass `endpoint` to keep pagination on one proxy (same session).
+ * Omit `endpoint` only for ad-hoc single requests (picks next proxy via round-robin).
+ */
 export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = null) {
   const ep = endpoint ?? getNextEndpoint();
 
   return runOnProxy(ep, async () => {
     const client = createRedditClient(ep);
-
-    console.log('fetchRedditJson', client.defaults.headers, url, params);
 
     try {
       const { data } = await client.get(url, { params });
