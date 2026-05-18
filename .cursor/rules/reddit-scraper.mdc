@@ -17,7 +17,7 @@ alwaysApply: true
 |-------|---------|
 | `posts` | One column per Reddit t3 field + `note` JSONB for future keys |
 | `comments` | One column per Reddit t1 field + `note` JSONB for future keys |
-| `subreddit` | `name`, `last_timestamp`, `interval_seconds` — comment scrape schedule |
+| `subreddit` | `name`, `last_timestamp`, `interval_seconds`, `total_posts`, `new_posts` — comment scrape schedule |
 | `global` | Singleton: post scrape `last_timestamp`, `interval_seconds` |
 | `global_ids` | `type` (t3/t1), `data_id`, `timestamp` — dedup registry |
 
@@ -27,12 +27,14 @@ alwaysApply: true
    - Upsert `posts`, register `global_ids`, auto-add `subreddit` (`last_timestamp` NULL, 600s interval)
    - All new in batch → paginate until existing found → **shorten** global interval
    - >50 existing in batch → **lengthen** global interval
-2. **Comment workers** (1 per proxy + direct): task queue + coordinator enqueues due subreddits
-   - Each worker keeps one endpoint; entire subreddit scrape (all pages) uses that proxy only
-   - `https://www.reddit.com/r/{name}/comments.json?limit=100`
-   - `last_timestamp` NULL (new sub): one fetch, 100 comments, then incremental on schedule
+2. **Comment workers** (1 per proxy + direct): coordinator every 60s enqueues up to 200 tasks
+   - 100 subs with highest `new_posts` (then reset `new_posts` to 0)
+   - 50 due subs (`last_poll_at` set and interval elapsed)
+   - 50 never-scraped subs (`last_poll_at` NULL)
+   - Never scraped: one page (100 comments); interval = avg(current, now − oldest comment ts)
+   - Incremental: paginate from `last_timestamp` to now; interval ∝ 100/scraped count (200 comments → half)
+   - Post scrape increments `total_posts` and `new_posts` per new post
    - On error: re-queue task + sleep `COMMENT_IDLE_SLEEP_SECONDS` (default 10s)
-   - Empty queue: sleep 10s
 
 ## Commands
 ```bash

@@ -10,6 +10,7 @@ import {
   globalIdExists,
   insertGlobalId,
   ensureSubreddit,
+  recordSubredditNewPost,
   insertPost,
   updatePost,
 } from './entityStore.js';
@@ -60,6 +61,7 @@ async function processPostChild(child, stats, newestTs, ctx) {
   }
 
   await insertPost(fields);
+  await recordSubredditNewPost(fields.subreddit);
   stats.new += 1;
   stats.total += 1;
   return latest;

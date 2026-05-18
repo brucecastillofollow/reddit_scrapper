@@ -38,11 +38,87 @@ export async function insertGlobalId(type, dataId, timestamp) {
 
 export async function ensureSubreddit(name) {
   await pool.query(
-    `INSERT INTO subreddit (name, last_timestamp, interval_seconds)
-     VALUES ($1, NULL, $2)
+    `INSERT INTO subreddit (name, last_timestamp, interval_seconds, total_posts, new_posts)
+     VALUES ($1, NULL, $2, 0, 0)
      ON CONFLICT (name) DO NOTHING`,
     [name, 600],
   );
+}
+
+export async function recordSubredditNewPost(name) {
+  await pool.query(
+    `UPDATE subreddit SET total_posts = total_posts + 1, new_posts = new_posts + 1 WHERE name = $1`,
+    [name],
+  );
+}
+
+const SUBREDDIT_TASK_COLUMNS = `
+  name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts
+`;
+
+/**
+ * Coordinator batch (up to 200 tasks): top by new_posts (reset counters), due scraped, never scraped.
+ */
+export async function buildCommentCoordinatorTasks(limits) {
+  const { hot, due, never } = limits;
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const { rows: hotRows } = await client.query(
+      `SELECT ${SUBREDDIT_TASK_COLUMNS}
+       FROM subreddit
+       ORDER BY new_posts DESC, name
+       LIMIT $1
+       FOR UPDATE`,
+      [hot],
+    );
+
+    const hotNames = hotRows.map((r) => r.name);
+    if (hotNames.length > 0) {
+      await client.query(`UPDATE subreddit SET new_posts = 0 WHERE name = ANY($1::varchar[])`, [
+        hotNames,
+      ]);
+    }
+
+    const { rows: dueRows } = await client.query(
+      `SELECT ${SUBREDDIT_TASK_COLUMNS}
+       FROM subreddit
+       WHERE last_poll_at IS NOT NULL
+         AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+       ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC, name
+       LIMIT $1`,
+      [due],
+    );
+
+    const { rows: neverRows } = await client.query(
+      `SELECT ${SUBREDDIT_TASK_COLUMNS}
+       FROM subreddit
+       WHERE last_poll_at IS NULL
+       ORDER BY new_posts DESC, total_posts DESC, name
+       LIMIT $1`,
+      [never],
+    );
+
+    await client.query('COMMIT');
+
+    const seen = new Set();
+    const tasks = [];
+
+    for (const row of [...hotRows, ...dueRows, ...neverRows]) {
+      if (seen.has(row.name)) continue;
+      seen.add(row.name);
+      tasks.push(row);
+    }
+
+    return { tasks, counts: { hot: hotRows.length, due: dueRows.length, never: neverRows.length } };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function insertPost(row) {
@@ -59,47 +135,6 @@ export async function insertComment(row) {
 
 export async function updateComment(row) {
   await updateRow('comments', row);
-}
-
-const DUE_SUBREDDIT_WHERE = `
-  last_poll_at IS NULL
-  OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
-`;
-
-/** Never scraped first, then most overdue (earliest due time). */
-const DUE_SUBREDDIT_ORDER = `
-  ORDER BY
-    last_poll_at NULLS FIRST,
-    (last_poll_at + (interval_seconds || ' seconds')::interval) ASC
-`;
-
-export async function countSubredditsDueForComments() {
-  const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS c FROM subreddit WHERE ${DUE_SUBREDDIT_WHERE}`,
-  );
-  return rows[0].c;
-}
-
-export async function getSubredditsDueForComments(limit) {
-  const { rows } = await pool.query(
-    `SELECT name, last_timestamp, interval_seconds, last_poll_at
-     FROM subreddit
-     WHERE ${DUE_SUBREDDIT_WHERE}
-     ${DUE_SUBREDDIT_ORDER}
-     LIMIT $1`,
-    [limit],
-  );
-  return rows;
-}
-
-export async function getAllSubredditsDueForComments() {
-  const { rows } = await pool.query(
-    `SELECT name, last_timestamp, interval_seconds, last_poll_at
-     FROM subreddit
-     WHERE ${DUE_SUBREDDIT_WHERE}
-     ${DUE_SUBREDDIT_ORDER}`,
-  );
-  return rows;
 }
 
 export async function updateSubreddit(name, fields) {

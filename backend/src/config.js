@@ -28,6 +28,10 @@ export const config = {
   commentLookbackDays: num(process.env.COMMENT_LOOKBACK_DAYS, 30),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
   commentIdleSleepSeconds: num(process.env.COMMENT_IDLE_SLEEP_SECONDS, 10),
+  commentCoordinatorIntervalSeconds: num(process.env.COMMENT_COORDINATOR_INTERVAL_SECONDS, 60),
+  commentCoordinatorHotLimit: num(process.env.COMMENT_COORDINATOR_HOT_LIMIT, 100),
+  commentCoordinatorDueLimit: num(process.env.COMMENT_COORDINATOR_DUE_LIMIT, 50),
+  commentCoordinatorNeverLimit: num(process.env.COMMENT_COORDINATOR_NEVER_LIMIT, 50),
   /** Min seconds between Reddit requests on the same proxy (429 avoidance). */
   proxyCooldownSeconds: num(
     process.env.PROXY_COOLDOWN_SECONDS || process.env.SCRAPE_SLEEP_SECONDS,
