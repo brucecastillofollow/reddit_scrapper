@@ -17,24 +17,19 @@ ${buildCommentsSchemaSql({ reset: resetData })}
 CREATE TABLE IF NOT EXISTS subreddit (
   name VARCHAR(128) PRIMARY KEY,
   last_timestamp TIMESTAMPTZ,
-  last_id VARCHAR(32),
   interval_seconds INTEGER NOT NULL DEFAULT 600,
   last_poll_at TIMESTAMPTZ
 );
 
 ALTER TABLE subreddit ALTER COLUMN last_timestamp DROP NOT NULL;
-ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS last_id VARCHAR(32);
-UPDATE subreddit SET last_timestamp = NULL, last_id = NULL WHERE last_poll_at IS NULL;
+UPDATE subreddit SET last_timestamp = NULL WHERE last_poll_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS global (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   last_timestamp TIMESTAMPTZ NOT NULL DEFAULT (NOW() - INTERVAL '1 hour'),
-  last_id VARCHAR(32),
   interval_seconds INTEGER NOT NULL DEFAULT 300,
   last_poll_at TIMESTAMPTZ
 );
-
-ALTER TABLE global ADD COLUMN IF NOT EXISTS last_id VARCHAR(32);
 
 INSERT INTO global (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 

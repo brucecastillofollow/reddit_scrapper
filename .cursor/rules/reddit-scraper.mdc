@@ -23,12 +23,12 @@ alwaysApply: true
 
 ## Scraping workers
 1. **Post worker** (single loop): `https://www.reddit.com/new.json`
-   - `global.last_id` NULL → one page; else paginate `?after={last_id}` until &lt;100 items
-   - Bookmark `global.last_id` = first child fullname on first page each run
-   - Auto-add `subreddit` (`last_id` NULL); interval adjust on batch stats
+   - Upsert `posts`, register `global_ids`, auto-add `subreddit` (`last_timestamp` NULL, 600s interval)
+   - All new in batch → paginate `?before={after}` until existing found → **shorten** global interval
+   - >50 existing in batch → **lengthen** global interval
 2. **Comment workers** (1 per proxy + direct): task queue + coordinator enqueues due subreddits
-   - `subreddit.last_id` NULL → one page; else paginate `?after={last_id}` until &lt;100 items
-   - Bookmark `subreddit.last_id` = first child fullname on first page each run
+   - Each worker uses its own endpoint; `https://www.reddit.com/r/{name}/comments.json?limit=100`
+   - `last_timestamp` NULL (new sub): one fetch, 100 comments, then incremental on schedule
    - On error: re-queue task + sleep `COMMENT_IDLE_SLEEP_SECONDS` (default 10s)
    - Empty queue: sleep 10s
 

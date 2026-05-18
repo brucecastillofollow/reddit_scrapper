@@ -38,8 +38,8 @@ export async function insertGlobalId(type, dataId, timestamp) {
 
 export async function ensureSubreddit(name) {
   await pool.query(
-    `INSERT INTO subreddit (name, last_timestamp, last_id, interval_seconds)
-     VALUES ($1, NULL, NULL, $2)
+    `INSERT INTO subreddit (name, last_timestamp, interval_seconds)
+     VALUES ($1, NULL, $2)
      ON CONFLICT (name) DO NOTHING`,
     [name, 600],
   );
@@ -82,7 +82,7 @@ export async function countSubredditsDueForComments() {
 
 export async function getSubredditsDueForComments(limit) {
   const { rows } = await pool.query(
-    `SELECT name, last_timestamp, last_id, interval_seconds, last_poll_at
+    `SELECT name, last_timestamp, interval_seconds, last_poll_at
      FROM subreddit
      WHERE ${DUE_SUBREDDIT_WHERE}
      ${DUE_SUBREDDIT_ORDER}
@@ -94,7 +94,7 @@ export async function getSubredditsDueForComments(limit) {
 
 export async function getAllSubredditsDueForComments() {
   const { rows } = await pool.query(
-    `SELECT name, last_timestamp, last_id, interval_seconds, last_poll_at
+    `SELECT name, last_timestamp, interval_seconds, last_poll_at
      FROM subreddit
      WHERE ${DUE_SUBREDDIT_WHERE}
      ${DUE_SUBREDDIT_ORDER}`,
