@@ -17,6 +17,8 @@ export const config = {
   scrapeFailureLog: process.env.SCRAPE_FAILURE_LOG || './data/logs/scrape-failures.log',
   scrapeCommentTimingLog:
     process.env.SCRAPE_COMMENT_TIMING_LOG || './data/logs/comment-scrape-timing.log',
+  scrapeCommentIntervalLog:
+    process.env.SCRAPE_COMMENT_INTERVAL_LOG || './data/logs/comment-interval.log',
   retentionDays: num(process.env.RETENTION_DAYS, 30),
   redditUserAgent: process.env.REDDIT_USER_AGENT || 'reddit-scraper/1.0 (research project)',
   intervalMinSeconds: num(process.env.INTERVAL_MIN_SECONDS, 60),
@@ -32,6 +34,11 @@ export const config = {
   commentCoordinatorHotLimit: num(process.env.COMMENT_COORDINATOR_HOT_LIMIT, 100),
   commentCoordinatorDueLimit: num(process.env.COMMENT_COORDINATOR_DUE_LIMIT, 50),
   commentCoordinatorNeverLimit: num(process.env.COMMENT_COORDINATOR_NEVER_LIMIT, 50),
+  /** Target comments per scrape; interval ≈ seconds until this many comments appear. */
+  commentTargetBatchSize: num(process.env.COMMENT_TARGET_BATCH_SIZE, 100),
+  commentEfficiencyDays: num(process.env.COMMENT_EFFICIENCY_DAYS, 7),
+  /** Exponential half-life (minutes) for weighting recent comment volume more heavily. */
+  commentWeightHalfLifeMinutes: num(process.env.COMMENT_WEIGHT_HALF_LIFE_MINUTES, 360),
   /** Min seconds between Reddit requests on the same proxy (429 avoidance). */
   proxyCooldownSeconds: num(
     process.env.PROXY_COOLDOWN_SECONDS || process.env.SCRAPE_SLEEP_SECONDS,

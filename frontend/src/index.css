@@ -238,3 +238,98 @@ td a:hover {
 .stat-failed {
   color: var(--error);
 }
+
+.efficiency-section {
+  margin-bottom: 2.5rem;
+}
+
+.efficiency-section h2 {
+  font-size: 1.25rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  margin-bottom: 0.35rem;
+}
+
+.efficiency-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.days-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.days-picker select {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.chart-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1rem 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 120px;
+  padding: 0 0.25rem;
+}
+
+.chart-bar {
+  flex: 1;
+  min-width: 2px;
+  background: linear-gradient(to top, var(--accent-dim), var(--accent));
+  border-radius: 2px 2px 0 0;
+  opacity: 0.85;
+}
+
+.chart-bar:hover {
+  opacity: 1;
+}
+
+.chart-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.5rem;
+}
+
+.score-good {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.score-mid {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.score-low {
+  color: var(--error);
+  font-weight: 600;
+}

@@ -38,10 +38,46 @@ export async function insertGlobalId(type, dataId, timestamp) {
 
 export async function ensureSubreddit(name) {
   await pool.query(
-    `INSERT INTO subreddit (name, last_timestamp, interval_seconds, total_posts, new_posts)
-     VALUES ($1, NULL, $2, 0, 0)
+    `INSERT INTO subreddit (name, last_timestamp, interval_seconds, total_posts, new_posts, total_comment, total_time)
+     VALUES ($1, NULL, $2, 0, 0, 0, 0)
      ON CONFLICT (name) DO NOTHING`,
     [name, 600],
+  );
+}
+
+/** After comment scrape: bump total_comment; widen first/last scraped; recompute total_time. */
+export async function recordSubredditCommentScrape(name, { added, oldestTs, newestTs }) {
+  const oldest = oldestTs instanceof Date ? oldestTs : oldestTs ? new Date(oldestTs) : null;
+  const newest = newestTs instanceof Date ? newestTs : newestTs ? new Date(newestTs) : null;
+
+  if (added <= 0 && !oldest && !newest) return;
+
+  const { rows } = await pool.query(
+    `SELECT first_scraped_at, last_scraped_at FROM subreddit WHERE name = $1`,
+    [name],
+  );
+  const row = rows[0];
+  if (!row) return;
+
+  let first = row.first_scraped_at ? new Date(row.first_scraped_at) : null;
+  let last = row.last_scraped_at ? new Date(row.last_scraped_at) : null;
+
+  if (oldest && (!first || oldest < first)) first = oldest;
+  if (newest && (!last || newest > last)) last = newest;
+
+  let totalTime = 0;
+  if (first && last) {
+    totalTime = Math.max(0, Math.floor((last.getTime() - first.getTime()) / 1000));
+  }
+
+  await pool.query(
+    `UPDATE subreddit SET
+      total_comment = total_comment + $2,
+      first_scraped_at = $3,
+      last_scraped_at = $4,
+      total_time = $5
+     WHERE name = $1`,
+    [name, added, first, last, totalTime],
   );
 }
 

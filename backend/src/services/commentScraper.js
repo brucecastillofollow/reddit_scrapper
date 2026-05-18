@@ -1,11 +1,9 @@
 import { config } from '../config.js';
 import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
-import { logCommentScrapeTiming } from './scrapeLogger.js';
-import {
-  intervalFromNeverScrapedDelta,
-  intervalFromCommentVolume,
-} from './commentInterval.js';
+import { logCommentScrapeTiming, logCommentIntervalUpdate } from './scrapeLogger.js';
+import { computeCommentInterval } from './commentInterval.js';
+import { getSubredditWeightedActivity } from './commentActivity.js';
 import { toUtcDate, isAtOrBeforeUtc, utcNow } from './scrapeBounds.js';
 import {
   typedFieldsFromComment,
@@ -15,6 +13,7 @@ import {
   insertComment,
   updateComment,
   updateSubreddit,
+  recordSubredditCommentScrape,
 } from './entityStore.js';
 
 function commentsUrl(subreddit) {
@@ -31,6 +30,10 @@ function isNeverScraped(subRow) {
   return subRow.last_poll_at == null;
 }
 
+function isHotSubreddit(subRow) {
+  return (subRow.new_posts ?? 0) > 0;
+}
+
 function createCommentScrapeContext({ neverScraped, watermark }) {
   return {
     neverScraped,
@@ -40,9 +43,17 @@ function createCommentScrapeContext({ neverScraped, watermark }) {
   };
 }
 
-async function processCommentChild(child, stats, newestTs, ctx) {
-  if (child.kind !== 't1' || !child.data?.id) return newestTs;
-  if (ctx.stopped) return newestTs;
+function mergeBounds(bounds, createdUtc) {
+  if (!createdUtc) return bounds;
+  let { oldestTs, newestTs } = bounds;
+  if (!oldestTs || createdUtc < oldestTs) oldestTs = createdUtc;
+  if (!newestTs || createdUtc > newestTs) newestTs = createdUtc;
+  return { oldestTs, newestTs };
+}
+
+async function processCommentChild(child, stats, bounds, ctx) {
+  if (child.kind !== 't1' || !child.data?.id) return bounds;
+  if (ctx.stopped) return bounds;
 
   const d = child.data;
   const type = 't1';
@@ -53,13 +64,10 @@ async function processCommentChild(child, stats, newestTs, ctx) {
   if (ctx.watermark && isAtOrBeforeUtc(createdUtc, ctx.watermark)) {
     ctx.stopped = true;
     ctx.stopReason = 'watermark';
-    return newestTs;
+    return bounds;
   }
 
-  let latest = newestTs;
-  if (!newestTs || createdUtc > newestTs) {
-    latest = createdUtc;
-  }
+  const nextBounds = mergeBounds(bounds, createdUtc);
 
   if (!(await globalIdExists(type, dataId))) {
     await insertGlobalId(type, dataId, createdUtc);
@@ -71,67 +79,85 @@ async function processCommentChild(child, stats, newestTs, ctx) {
     await updateComment(fields);
     stats.existing += 1;
     stats.total += 1;
-    return latest;
+    return nextBounds;
   }
 
   await insertComment(fields);
   stats.new += 1;
   stats.total += 1;
-  return latest;
+  return nextBounds;
 }
 
-async function processListing(listing, stats, ctx) {
+async function processListing(listing, stats, bounds, ctx) {
   const children = listing?.data?.children ?? [];
-  let newestTs = null;
+  let nextBounds = bounds;
 
   for (const child of children) {
     if (ctx.stopped) break;
-    newestTs = await processCommentChild(child, stats, newestTs, ctx);
+    nextBounds = await processCommentChild(child, stats, nextBounds, ctx);
   }
 
   return {
     after: listing?.data?.after ?? null,
     reddit_dist: listing?.data?.dist ?? children.length,
-    newestTs,
+    bounds: nextBounds,
   };
 }
 
-/** Oldest comment timestamp on a listing page (Reddit returns newest first). */
-function oldestCommentTimestamp(listing) {
-  const children = listing?.data?.children ?? [];
-  let oldest = null;
+async function resolveInterval(subreddit, stats, bounds, pollAt, lastTimestamp, currentInterval) {
+  const { oldestTs, newestTs } = bounds;
 
-  for (const child of children) {
-    if (child.kind !== 't1' || !child.data) continue;
-    const fields = typedFieldsFromComment(child.data);
-    const ts = toUtcDate(fields.created_utc);
-    if (!ts) continue;
-    if (!oldest || ts < oldest) oldest = ts;
+  let commentSpanSec = 1;
+  if (oldestTs && newestTs) {
+    commentSpanSec = Math.max(1, Math.floor((newestTs.getTime() - oldestTs.getTime()) / 1000));
   }
 
-  return oldest;
-}
+  const watermark = lastTimestamp ? toUtcDate(lastTimestamp) : null;
+  const wallDeltaSec = watermark
+    ? Math.max(1, Math.floor((pollAt.getTime() - watermark.getTime()) / 1000))
+    : commentSpanSec;
 
-function resolveInterval(neverScraped, currentInterval, stats, oldestTs, pollAt) {
-  if (neverScraped) {
-    if (!oldestTs) return currentInterval;
-    const deltaSeconds = (pollAt.getTime() - oldestTs.getTime()) / 1000;
-    return intervalFromNeverScrapedDelta(currentInterval, deltaSeconds);
+  let weightedRatePerMin = null;
+  try {
+    const activity = await getSubredditWeightedActivity(subreddit);
+    weightedRatePerMin = activity.summary.weighted_rate_per_min;
+  } catch {
+    /* use scrape-only fallback */
   }
 
-  return intervalFromCommentVolume(currentInterval, stats.total);
+  const { intervalSeconds, detail } = computeCommentInterval({
+    scrapedCount: stats.new,
+    commentSpanSec,
+    wallDeltaSec,
+    weightedRatePerMin,
+  });
+
+  return {
+    intervalSeconds: intervalSeconds ?? currentInterval,
+    intervalDetail: {
+      ...detail,
+      interval_before_sec: currentInterval,
+      interval_after_sec: intervalSeconds ?? currentInterval,
+      last_timestamp_utc: lastTimestamp ? toUtcDate(lastTimestamp).toISOString() : null,
+      oldest_processed_utc: oldestTs?.toISOString() ?? null,
+      newest_processed_utc: newestTs?.toISOString() ?? null,
+    },
+    commentSpanSec,
+    wallDeltaSec,
+    weightedRatePerMin,
+  };
 }
 
 export async function runCommentScrapeForSubreddit(subRow, endpoint) {
   const { name, last_timestamp, interval_seconds: currentInterval } = subRow;
   const neverScraped = isNeverScraped(subRow);
+  const hot = isHotSubreddit(subRow);
   const watermark = last_timestamp ? toUtcDate(last_timestamp) : null;
   const startedAt = Date.now();
   const stats = { new: 0, existing: 0, total: 0 };
   const ctx = createCommentScrapeContext({ neverScraped, watermark });
-  let newestTs = watermark;
+  let bounds = { oldestTs: null, newestTs: watermark };
   let pages = 0;
-  let oldestTs = null;
 
   try {
     let { data: listing } = await fetchRedditJson(
@@ -142,14 +168,8 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
     );
 
     pages = 1;
-    if (neverScraped) {
-      oldestTs = oldestCommentTimestamp(listing);
-    }
-
-    let meta = await processListing(listing, stats, ctx);
-    if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
-      newestTs = meta.newestTs;
-    }
+    let meta = await processListing(listing, stats, bounds, ctx);
+    bounds = meta.bounds;
 
     if (!neverScraped) {
       while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
@@ -160,27 +180,39 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
           endpoint,
         ));
         pages += 1;
-        meta = await processListing(listing, stats, ctx);
-        if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
-          newestTs = meta.newestTs;
-        }
+        meta = await processListing(listing, stats, bounds, ctx);
+        bounds = meta.bounds;
       }
     }
 
     const pollAt = utcNow();
-    const intervalSeconds = resolveInterval(
-      neverScraped,
-      currentInterval,
-      stats,
-      oldestTs,
-      pollAt,
-    );
-    const resolvedTimestamp = newestTs || pollAt;
+    const { intervalSeconds, intervalDetail, commentSpanSec, wallDeltaSec, weightedRatePerMin } =
+      await resolveInterval(name, stats, bounds, pollAt, last_timestamp, currentInterval);
+    const resolvedTimestamp = bounds.newestTs || pollAt;
+
+    await logCommentIntervalUpdate({
+      subreddit: name,
+      hot,
+      never_scraped: neverScraped,
+      stop_reason: ctx.stopReason,
+      interval_before_sec: currentInterval,
+      interval_after_sec: intervalSeconds,
+      interval_detail: intervalDetail,
+    });
+
+    if (stats.total > 0) {
+      await recordSubredditCommentScrape(name, {
+        added: stats.new,
+        oldestTs: bounds.oldestTs,
+        newestTs: bounds.newestTs,
+      });
+    }
 
     await updateSubreddit(name, {
       last_timestamp: resolvedTimestamp,
       interval_seconds: intervalSeconds,
       last_poll_at: pollAt,
+      last_scrape_new: stats.new,
     });
 
     const durationMs = Date.now() - startedAt;
@@ -189,6 +221,7 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       duration_ms: durationMs,
       success: true,
       never_scraped: neverScraped,
+      hot,
       comments_new: stats.new,
       comments_existing: stats.existing,
       comments_total: stats.total,
@@ -196,7 +229,12 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       pages,
       stop_reason: ctx.stopReason,
       interval_seconds: intervalSeconds,
-      oldest_comment_utc: oldestTs?.toISOString() ?? null,
+      interval_before_sec: currentInterval,
+      comment_span_sec: commentSpanSec,
+      wall_delta_sec: wallDeltaSec,
+      interval_detail: intervalDetail,
+      weighted_rate_per_min: weightedRatePerMin,
+      oldest_comment_utc: bounds.oldestTs?.toISOString() ?? null,
       proxy_id: endpoint.id,
       proxy_index: endpoint.index,
     });
@@ -216,6 +254,7 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       pages,
       endpoint,
       neverScraped,
+      hot,
       stopReason: ctx.stopReason,
     };
   } catch (err) {
@@ -225,6 +264,7 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       duration_ms: durationMs,
       success: false,
       never_scraped: neverScraped,
+      hot,
       error: err.message,
       pages,
       proxy_id: endpoint.id,

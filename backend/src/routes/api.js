@@ -3,6 +3,8 @@ import { pool, getGlobal, getScrapeStatus } from '../db.js';
 import { config } from '../config.js';
 import { getProxyCount, getPoolStats } from '../services/proxyPool.js';
 import { isPostScrapeRunning, getCommentQueueStatus, triggerPostScrape } from '../workers/scrapeWorkers.js';
+import { buildEfficiencyReport } from '../services/scrapeEfficiency.js';
+import { getSubredditWeightedActivity } from '../services/commentActivity.js';
 
 const router = Router();
 
@@ -33,11 +35,13 @@ router.get('/status', async (_req, res, next) => {
         FROM subreddit
       `),
         pool.query(
-          `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts
+          `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts,
+                  total_comment, total_time, first_scraped_at, last_scraped_at
            FROM subreddit ORDER BY last_poll_at DESC NULLS LAST LIMIT 10`,
         ),
         pool.query(
           `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts,
+                  total_comment, total_time, first_scraped_at, last_scraped_at,
                   CASE
                     WHEN last_poll_at IS NULL THEN NULL
                     ELSE last_poll_at + (interval_seconds || ' seconds')::interval
@@ -173,10 +177,52 @@ router.post('/scrape/run', async (_req, res, next) => {
   }
 });
 
+router.get('/efficiency', async (req, res, next) => {
+  try {
+    const days = Math.min(30, Math.max(1, parseInt(req.query.days, 10) || 7));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const subreddit = String(req.query.subreddit || '').trim();
+
+    if (subreddit) {
+      const activity = await getSubredditWeightedActivity(subreddit, days);
+      const { rows } = await pool.query(
+        `SELECT name, interval_seconds, last_scrape_new, total_comment, last_poll_at
+         FROM subreddit WHERE name = $1`,
+        [subreddit],
+      );
+      const row = rows[0];
+      return res.json({
+        days,
+        half_life_minutes: config.commentWeightHalfLifeMinutes,
+        target_batch: config.commentTargetBatchSize,
+        subreddit: {
+          ...row,
+          ...activity.summary,
+          recommended_interval_sec: activity.recommended_interval_sec,
+          series: activity.buckets.slice(-1440).map((b) => ({
+            ...b,
+            weight: Math.round(
+              Math.exp(-b.age_minutes / config.commentWeightHalfLifeMinutes) * 1000,
+            ) / 1000,
+            weighted_count: Math.round(
+              b.count * Math.exp(-b.age_minutes / config.commentWeightHalfLifeMinutes),
+            ),
+          })),
+        },
+      });
+    }
+
+    res.json(await buildEfficiencyReport({ days, subredditLimit: limit }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/subreddits', async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
       `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts,
+              total_comment, total_time, first_scraped_at, last_scraped_at, last_scrape_new,
               CASE
                 WHEN last_poll_at IS NULL THEN 'waiting'
                 WHEN last_poll_at + (interval_seconds || ' seconds')::interval <= NOW() THEN 'waiting'

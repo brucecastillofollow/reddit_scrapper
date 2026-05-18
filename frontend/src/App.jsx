@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import EfficiencyPanel from './EfficiencyPanel.jsx';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -233,6 +234,8 @@ export default function App() {
           </div>
         </section>
       )}
+
+      <EfficiencyPanel />
 
       <section className="grid" style={{ marginBottom: '2rem' }}>
         <div className="card">

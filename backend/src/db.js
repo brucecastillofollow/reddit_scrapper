@@ -20,13 +20,25 @@ CREATE TABLE IF NOT EXISTS subreddit (
   interval_seconds INTEGER NOT NULL DEFAULT 600,
   last_poll_at TIMESTAMPTZ,
   total_posts INTEGER NOT NULL DEFAULT 0,
-  new_posts INTEGER NOT NULL DEFAULT 0
+  new_posts INTEGER NOT NULL DEFAULT 0,
+  total_comment INTEGER NOT NULL DEFAULT 0,
+  first_scraped_at TIMESTAMPTZ,
+  last_scraped_at TIMESTAMPTZ,
+  total_time INTEGER NOT NULL DEFAULT 0,
+  last_scrape_new INTEGER NOT NULL DEFAULT 0
 );
 
 ALTER TABLE subreddit ALTER COLUMN last_timestamp DROP NOT NULL;
 ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS total_posts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS new_posts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS total_comment INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS first_scraped_at TIMESTAMPTZ;
+ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMPTZ;
+ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS total_time INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subreddit ADD COLUMN IF NOT EXISTS last_scrape_new INTEGER NOT NULL DEFAULT 0;
 UPDATE subreddit SET last_timestamp = NULL WHERE last_poll_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS ix_comments_subreddit_created ON comments (subreddit, created_utc);
 
 CREATE TABLE IF NOT EXISTS global (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
