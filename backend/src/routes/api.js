@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, getGlobal, getScrapeStatus } from '../db.js';
 import { config } from '../config.js';
-import { getProxyCount, getPoolSummary } from '../services/proxyPool.js';
+import { getProxyCount, getPoolStats } from '../services/proxyPool.js';
 import { isPostScrapeRunning, getCommentQueueStatus, triggerPostScrape } from '../workers/scrapeWorkers.js';
 
 const router = Router();
@@ -60,6 +60,23 @@ router.get('/status', async (_req, res, next) => {
       last_comment_finished_at: status?.last_comment_finished_at ?? null,
       last_post_error: status?.last_post_error ?? null,
       last_comment_error: status?.last_comment_error ?? null,
+      last_post_run: {
+        new: status?.last_post_new ?? 0,
+        existing: status?.last_post_existing ?? 0,
+        total: status?.last_post_total ?? 0,
+        finished_at: status?.last_post_finished_at ?? null,
+      },
+      last_comment_run: {
+        subreddit: status?.last_comment_subreddit ?? null,
+        new: status?.last_comment_new ?? 0,
+        existing: status?.last_comment_existing ?? 0,
+        total: status?.last_comment_total ?? 0,
+        finished_at: status?.last_comment_finished_at ?? null,
+      },
+      session_added: {
+        posts: Number(status?.session_posts_new ?? 0),
+        comments: Number(status?.session_comments_new ?? 0),
+      },
       total_posts_in_db: Number(postsCount.rows[0].c),
       total_comments_in_db: Number(commentsCount.rows[0].c),
       subreddit_count: subredditCount.rows[0].c,
@@ -79,7 +96,7 @@ router.get('/status', async (_req, res, next) => {
       },
       active_proxy_index: status?.active_proxy_index ?? 0,
       proxies_configured: getProxyCount(),
-      proxy_pool: getPoolSummary(),
+      proxy_stats: getPoolStats(),
       use_direct: config.useDirect,
       proxies_healthy: status?.proxies_healthy ?? 0,
       retention_days: config.retentionDays,

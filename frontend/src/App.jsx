@@ -99,7 +99,13 @@ export default function App() {
             </span>
           </p>
           <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
-            Last: {formatDate(status?.last_post_finished_at)}
+            Last: {formatDate(status?.last_post_run?.finished_at)}
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Last run:{' '}
+            <span className="stat-success">+{status?.last_post_run?.new?.toLocaleString() ?? 0} new</span>
+            {' · '}
+            {status?.last_post_run?.existing?.toLocaleString() ?? 0} updated
           </p>
           <button
             type="button"
@@ -119,6 +125,20 @@ export default function App() {
             </span>
           </p>
           <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Last: {formatDate(status?.last_comment_run?.finished_at)}
+            {status?.last_comment_run?.subreddit && (
+              <> · r/{status.last_comment_run.subreddit}</>
+            )}
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Last run:{' '}
+            <span className="stat-success">
+              +{status?.last_comment_run?.new?.toLocaleString() ?? 0} new
+            </span>
+            {' · '}
+            {status?.last_comment_run?.existing?.toLocaleString() ?? 0} updated
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
             {status?.subreddit_comments?.scraped_once ?? 0} scraped at least once
           </p>
           <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
@@ -143,6 +163,16 @@ export default function App() {
           <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
             {status?.total_comments_in_db?.toLocaleString() ?? '—'} comments
           </p>
+          <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Added this session:{' '}
+            <span className="stat-success">
+              +{status?.session_added?.posts?.toLocaleString() ?? 0} posts
+            </span>
+            {' · '}
+            <span className="stat-success">
+              +{status?.session_added?.comments?.toLocaleString() ?? 0} comments
+            </span>
+          </p>
         </div>
 
         <div className="card">
@@ -158,8 +188,51 @@ export default function App() {
           <p className="value">
             {status?.proxies_healthy ?? 0} / {status?.proxies_configured ?? 0} healthy
           </p>
+          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            {(status?.proxy_stats ?? []).reduce((n, p) => n + (p.requests_total ?? 0), 0).toLocaleString()}{' '}
+            scrape requests since start
+          </p>
         </div>
       </section>
+
+      {(status?.proxy_stats?.length ?? 0) > 0 && (
+        <section className="card" style={{ marginBottom: '2rem' }}>
+          <h2>Requests per proxy</h2>
+          <p style={{ marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--muted)' }}>
+            Reddit API calls via each endpoint (posts round-robin · comments pinned per worker). Resets on
+            backend restart.
+          </p>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Proxy</th>
+                  <th>Protocol</th>
+                  <th>Total</th>
+                  <th>Success</th>
+                  <th>Failed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.proxy_stats.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <span className="proxy-id">{p.id}</span>
+                      <span className="proxy-meta">{p.url_masked}</span>
+                    </td>
+                    <td>{p.protocol}</td>
+                    <td>{p.requests_total.toLocaleString()}</td>
+                    <td className="stat-success">{p.requests_success.toLocaleString()}</td>
+                    <td className={p.requests_failed > 0 ? 'stat-failed' : ''}>
+                      {p.requests_failed.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section className="grid" style={{ marginBottom: '2rem' }}>
         <div className="card">

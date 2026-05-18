@@ -55,7 +55,44 @@ CREATE TABLE IF NOT EXISTS scrape_status (
 );
 
 INSERT INTO scrape_status (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_post_new INTEGER DEFAULT 0;
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_post_existing INTEGER DEFAULT 0;
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_post_total INTEGER DEFAULT 0;
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_comment_subreddit VARCHAR(128);
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_comment_new INTEGER DEFAULT 0;
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_comment_existing INTEGER DEFAULT 0;
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_comment_total INTEGER DEFAULT 0;
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS session_posts_new BIGINT DEFAULT 0;
+ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS session_comments_new BIGINT DEFAULT 0;
 `;
+}
+
+export async function recordPostScrapeRun(stats) {
+  const { new: added, existing, total } = stats;
+  await pool.query(
+    `UPDATE scrape_status SET
+      last_post_new = $1,
+      last_post_existing = $2,
+      last_post_total = $3,
+      session_posts_new = COALESCE(session_posts_new, 0) + $4::bigint
+     WHERE id = 1`,
+    [added, existing, total, added],
+  );
+}
+
+export async function recordCommentScrapeRun(subreddit, stats) {
+  const { new: added, existing, total } = stats;
+  await pool.query(
+    `UPDATE scrape_status SET
+      last_comment_subreddit = $1,
+      last_comment_new = $2,
+      last_comment_existing = $3,
+      last_comment_total = $4,
+      session_comments_new = COALESCE(session_comments_new, 0) + $5::bigint
+     WHERE id = 1`,
+    [subreddit, added, existing, total, added],
+  );
 }
 
 export async function initDb() {

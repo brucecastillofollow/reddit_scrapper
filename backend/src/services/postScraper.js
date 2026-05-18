@@ -1,5 +1,5 @@
 import { config } from '../config.js';
-import { getGlobal, updateGlobal, updateScrapeStatus } from '../db.js';
+import { getGlobal, updateGlobal, updateScrapeStatus, recordPostScrapeRun } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
 import { sleepBeforeScrape } from './scrapeDelay.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
@@ -146,6 +146,7 @@ export async function runPostScrape() {
     });
   }
 
+  await recordPostScrapeRun(stats);
   await updateScrapeStatus({
     active_proxy_index: proxyIndex,
     last_post_finished_at: pollAt,

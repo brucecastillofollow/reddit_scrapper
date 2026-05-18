@@ -218,3 +218,23 @@ td a:hover {
   padding: 2rem;
   text-align: center;
 }
+
+.proxy-id {
+  display: block;
+  font-weight: 600;
+}
+
+.proxy-meta {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.stat-success {
+  color: var(--success);
+}
+
+.stat-failed {
+  color: var(--error);
+}

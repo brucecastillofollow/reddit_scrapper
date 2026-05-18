@@ -1,5 +1,5 @@
 import { config } from '../config.js';
-import { updateScrapeStatus } from '../db.js';
+import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
 import { sleepBeforeScrape } from './scrapeDelay.js';
 import { logCommentScrapeTiming } from './scrapeLogger.js';
@@ -177,6 +177,7 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       proxy_index: endpoint.index,
     });
 
+    await recordCommentScrapeRun(name, stats);
     await updateScrapeStatus({
       active_proxy_index: endpoint.index,
       last_comment_finished_at: pollAt,

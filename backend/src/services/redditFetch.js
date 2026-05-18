@@ -1,4 +1,4 @@
-import { createRedditClient, getNextEndpoint } from './proxyPool.js';
+import { createRedditClient, getNextEndpoint, recordProxyRequest } from './proxyPool.js';
 import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
 export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = null) {
@@ -7,8 +7,10 @@ export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = nu
 
   try {
     const { data } = await client.get(url, { params });
+    recordProxyRequest(ep, { success: true });
     return { data, proxyIndex: ep.index, endpoint: ep };
   } catch (err) {
+    recordProxyRequest(ep, { success: false });
     const proxyInfo = describeEndpoint(ep);
     await logScrapeFailure({
       kind: meta.kind || 'fetch',
