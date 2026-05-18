@@ -12,6 +12,8 @@ export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = nu
   return runOnProxy(ep, async () => {
     const client = createRedditClient(ep);
 
+    console.log('fetchRedditJson', client.defaults.headers, url, params);
+
     try {
       const { data } = await client.get(url, { params });
       recordProxyRequest(ep, { success: true });

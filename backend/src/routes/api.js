@@ -33,11 +33,11 @@ router.get('/status', async (_req, res, next) => {
         FROM subreddit
       `),
         pool.query(
-          `SELECT name, last_timestamp, interval_seconds, last_poll_at
+          `SELECT name, last_timestamp, last_id, interval_seconds, last_poll_at
            FROM subreddit ORDER BY last_poll_at DESC NULLS LAST LIMIT 10`,
         ),
         pool.query(
-          `SELECT name, last_timestamp, interval_seconds, last_poll_at,
+          `SELECT name, last_timestamp, last_id, interval_seconds, last_poll_at,
                   CASE
                     WHEN last_poll_at IS NULL THEN NULL
                     ELSE last_poll_at + (interval_seconds || ' seconds')::interval
@@ -91,6 +91,7 @@ router.get('/status', async (_req, res, next) => {
       comment_queue: getCommentQueueStatus(),
       global: {
         last_timestamp: global?.last_timestamp ?? null,
+        last_id: global?.last_id ?? null,
         interval_seconds: global?.interval_seconds ?? null,
         last_poll_at: global?.last_poll_at ?? null,
       },
@@ -176,7 +177,7 @@ router.post('/scrape/run', async (_req, res, next) => {
 router.get('/subreddits', async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT name, last_timestamp, interval_seconds, last_poll_at,
+      `SELECT name, last_timestamp, last_id, interval_seconds, last_poll_at,
               CASE
                 WHEN last_poll_at IS NULL THEN 'waiting'
                 WHEN last_poll_at + (interval_seconds || ' seconds')::interval <= NOW() THEN 'waiting'
