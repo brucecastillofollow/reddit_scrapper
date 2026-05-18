@@ -16,10 +16,13 @@ ${buildCommentsSchemaSql({ reset: resetData })}
 
 CREATE TABLE IF NOT EXISTS subreddit (
   name VARCHAR(128) PRIMARY KEY,
-  last_timestamp TIMESTAMPTZ NOT NULL,
+  last_timestamp TIMESTAMPTZ,
   interval_seconds INTEGER NOT NULL DEFAULT 600,
   last_poll_at TIMESTAMPTZ
 );
+
+ALTER TABLE subreddit ALTER COLUMN last_timestamp DROP NOT NULL;
+UPDATE subreddit SET last_timestamp = NULL WHERE last_poll_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS global (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),

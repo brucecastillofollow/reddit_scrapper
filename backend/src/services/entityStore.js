@@ -1,7 +1,6 @@
 import { pool } from '../db.js';
 import { rowFromRedditPost, rowFromRedditComment } from '../schema/redditFields.js';
 import { insertRow, updateRow } from '../schema/persistRow.js';
-import { utcCommentCutoff } from './scrapeBounds.js';
 
 export function typedFieldsFromPost(data) {
   return rowFromRedditPost(data);
@@ -40,9 +39,9 @@ export async function insertGlobalId(type, dataId, timestamp) {
 export async function ensureSubreddit(name) {
   await pool.query(
     `INSERT INTO subreddit (name, last_timestamp, interval_seconds)
-     VALUES ($1, $2, $3)
+     VALUES ($1, NULL, $2)
      ON CONFLICT (name) DO NOTHING`,
-    [name, utcCommentCutoff(), 600],
+    [name, 600],
   );
 }
 

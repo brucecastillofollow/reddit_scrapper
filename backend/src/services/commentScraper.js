@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { updateScrapeStatus } from '../db.js';
 import { fetchRedditJson } from './redditFetch.js';
+import { sleepBeforeScrape } from './scrapeDelay.js';
 import { logCommentScrapeTiming } from './scrapeLogger.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
 import { toUtcDate, isAtOrBeforeUtc, utcCommentCutoff, utcNow } from './scrapeBounds.js';
@@ -24,11 +25,12 @@ const fetchMeta = (name) => ({
   subreddit: name,
 });
 
-function createCommentScrapeContext() {
+function createCommentScrapeContext({ bootstrap = false } = {}) {
   return {
-    cutoff: utcCommentCutoff(),
+    bootstrap,
+    cutoff: bootstrap ? null : utcCommentCutoff(),
     stopped: false,
-    stopReason: null,
+    stopReason: bootstrap ? 'bootstrap' : null,
   };
 }
 
@@ -42,7 +44,7 @@ async function processCommentChild(child, stats, newestTs, ctx) {
   const fields = typedFieldsFromComment(d);
   const createdUtc = toUtcDate(fields.created_utc);
 
-  if (isAtOrBeforeUtc(createdUtc, ctx.cutoff)) {
+  if (!ctx.bootstrap && isAtOrBeforeUtc(createdUtc, ctx.cutoff)) {
     ctx.stopped = true;
     ctx.stopReason = 'cutoff';
     return newestTs;
@@ -63,8 +65,10 @@ async function processCommentChild(child, stats, newestTs, ctx) {
     await updateComment(fields);
     stats.existing += 1;
     stats.total += 1;
-    ctx.stopped = true;
-    ctx.stopReason = 'existing';
+    if (!ctx.bootstrap) {
+      ctx.stopped = true;
+      ctx.stopReason = 'existing';
+    }
     return latest;
   }
 
@@ -92,13 +96,16 @@ async function processListing(listing, stats, ctx) {
 
 export async function runCommentScrapeForSubreddit(subRow, endpoint) {
   const { name, last_timestamp, interval_seconds: currentInterval } = subRow;
+  const bootstrap = last_timestamp == null;
   const startedAt = Date.now();
   const stats = { new: 0, existing: 0, total: 0 };
-  const ctx = createCommentScrapeContext();
+  const ctx = createCommentScrapeContext({ bootstrap });
   let newestTs = last_timestamp ? toUtcDate(last_timestamp) : null;
   let pages = 0;
 
   try {
+    await sleepBeforeScrape();
+
     let { data: listing } = await fetchRedditJson(
       commentsUrl(name),
       { limit: 100 },
@@ -112,37 +119,42 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       newestTs = meta.newestTs;
     }
 
-    while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
-      ({ data: listing } = await fetchRedditJson(
-        commentsUrl(name),
-        { limit: 100, before: meta.after },
-        fetchMeta(name),
-        endpoint,
-      ));
-      pages += 1;
-      meta = await processListing(listing, stats, ctx);
-      if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
-        newestTs = meta.newestTs;
+    if (!bootstrap) {
+      while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
+        ({ data: listing } = await fetchRedditJson(
+          commentsUrl(name),
+          { limit: 100, before: meta.after },
+          fetchMeta(name),
+          endpoint,
+        ));
+        pages += 1;
+        meta = await processListing(listing, stats, ctx);
+        if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
+          newestTs = meta.newestTs;
+        }
       }
     }
 
-    const { allNew, mostlyExisting } = shouldAdjustInterval(
-      stats.existing,
-      stats.new,
-      stats.total,
-    );
-
     let intervalSeconds = currentInterval;
 
-    if (allNew && meta.after && !ctx.stopped) {
-      intervalSeconds = shortenInterval(intervalSeconds);
-    } else if (mostlyExisting) {
-      intervalSeconds = lengthenInterval(intervalSeconds);
+    if (!bootstrap) {
+      const { allNew, mostlyExisting } = shouldAdjustInterval(
+        stats.existing,
+        stats.new,
+        stats.total,
+      );
+
+      if (allNew && meta.after && !ctx.stopped) {
+        intervalSeconds = shortenInterval(intervalSeconds);
+      } else if (mostlyExisting) {
+        intervalSeconds = lengthenInterval(intervalSeconds);
+      }
     }
 
     const pollAt = utcNow();
+    const resolvedTimestamp = newestTs || (bootstrap ? pollAt : last_timestamp);
     await updateSubreddit(name, {
-      last_timestamp: newestTs || last_timestamp,
+      last_timestamp: resolvedTimestamp,
       interval_seconds: intervalSeconds,
       last_poll_at: pollAt,
     });
@@ -152,13 +164,14 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       subreddit: name,
       duration_ms: durationMs,
       success: true,
+      bootstrap,
       comments_new: stats.new,
       comments_existing: stats.existing,
       comments_total: stats.total,
       reddit_dist: meta.reddit_dist,
       pages,
       stop_reason: ctx.stopReason,
-      cutoff_utc: ctx.cutoff.toISOString(),
+      cutoff_utc: ctx.cutoff?.toISOString() ?? null,
       interval_seconds: intervalSeconds,
       proxy_id: endpoint.id,
       proxy_index: endpoint.index,

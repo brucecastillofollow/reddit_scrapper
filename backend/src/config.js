@@ -28,6 +28,7 @@ export const config = {
   commentLookbackDays: num(process.env.COMMENT_LOOKBACK_DAYS, 30),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
   commentIdleSleepSeconds: num(process.env.COMMENT_IDLE_SLEEP_SECONDS, 10),
+  scrapeSleepSeconds: num(process.env.SCRAPE_SLEEP_SECONDS, 2),
   useDirect: bool(process.env.USE_DIRECT, true),
   dbResetOnStart: bool(process.env.DB_RESET_ON_START, false),
   proxyUrls: loadProxyUrls(),
