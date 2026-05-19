@@ -102,6 +102,8 @@ router.get('/status', async (_req, res, next) => {
       proxies_configured: getProxyCount(),
       proxy_stats: getPoolStats(),
       use_direct: config.useDirect,
+      post_scrape_interval_seconds: config.postScrapeIntervalSeconds,
+      comment_max_tasks: config.commentScrapesPerMinute,
       proxy_cooldown_min_seconds: config.proxyCooldownMinSeconds,
       proxy_cooldown_max_seconds: config.proxyCooldownMaxSeconds,
       proxies_healthy: status?.proxies_healthy ?? 0,

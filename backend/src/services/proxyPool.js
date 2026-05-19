@@ -216,6 +216,36 @@ export function getPoolStats() {
   });
 }
 
+/**
+ * Endpoints to try for one post scrape run (failover order).
+ * Pagination stays on the first successful endpoint's session via runScrapeOnEndpoint.
+ */
+export function getEndpointsForFailover(firstEndpoint = null) {
+  if (pool.length === 0) {
+    return [
+      {
+        id: 'direct',
+        mode: 'direct',
+        protocol: 'direct',
+        url: null,
+        index: 0,
+      },
+    ];
+  }
+
+  const startIdx = firstEndpoint?.index ?? 0;
+  const healthy = [];
+  const quarantined = [];
+
+  for (let i = 0; i < pool.length; i += 1) {
+    const endpoint = pool[(startIdx + i) % pool.length];
+    if (isProxyQuarantined(endpoint)) quarantined.push(endpoint);
+    else healthy.push(endpoint);
+  }
+
+  return healthy.length > 0 ? healthy : quarantined;
+}
+
 /** Round-robin: pick one proxy for an entire scrape run (skips quarantined when possible). */
 export function getNextEndpoint() {
   if (pool.length === 0) {

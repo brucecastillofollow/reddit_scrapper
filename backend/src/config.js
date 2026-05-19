@@ -30,14 +30,17 @@ export const config = {
   intervalShrinkFactor: Number(process.env.INTERVAL_SHRINK_FACTOR) || 0.7,
   intervalGrowFactor: Number(process.env.INTERVAL_GROW_FACTOR) || 1.5,
   existingThreshold: num(process.env.EXISTING_THRESHOLD, 50),
+  /** Minimum seconds between post scrape attempts (new.json). */
+  postScrapeIntervalSeconds: num(process.env.POST_SCRAPE_INTERVAL_SECONDS, 30),
   maxPaginationPages: num(process.env.MAX_PAGINATION_PAGES, 20),
   commentLookbackDays: num(process.env.COMMENT_LOOKBACK_DAYS, 30),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
   commentIdleSleepSeconds: num(process.env.COMMENT_IDLE_SLEEP_SECONDS, 10),
   commentCoordinatorIntervalSeconds: num(process.env.COMMENT_COORDINATOR_INTERVAL_SECONDS, 60),
-  commentCoordinatorHotLimit: num(process.env.COMMENT_COORDINATOR_HOT_LIMIT, 100),
-  commentCoordinatorDueLimit: num(process.env.COMMENT_COORDINATOR_DUE_LIMIT, 50),
-  commentCoordinatorNeverLimit: num(process.env.COMMENT_COORDINATOR_NEVER_LIMIT, 50),
+  /** Subreddits enqueued per coordinator tick (20/min when interval is 60s). */
+  commentScrapesPerMinute: num(process.env.COMMENT_SCRAPES_PER_MINUTE, 20),
+  /** Prefer subs with new_posts greater than this (from post scraper). */
+  commentHotNewPostsMin: num(process.env.COMMENT_HOT_NEW_POSTS_MIN, 10),
   /** Target comments per scrape; interval ≈ seconds until this many comments appear. */
   commentTargetBatchSize: num(process.env.COMMENT_TARGET_BATCH_SIZE, 100),
   commentEfficiencyDays: num(process.env.COMMENT_EFFICIENCY_DAYS, 7),

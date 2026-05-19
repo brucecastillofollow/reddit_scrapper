@@ -1,5 +1,4 @@
 import { config } from '../config.js';
-import { getGlobal } from '../db.js';
 import { updateScrapeStatus } from '../db.js';
 import { countHealthyProxies } from '../services/proxyPool.js';
 import { runPostScrape } from '../services/postScraper.js';
@@ -26,18 +25,12 @@ async function postWorkerLoop() {
     await sleep(startupDelayMs);
   }
 
+  const intervalMs = config.postScrapeIntervalSeconds * 1000;
+
   while (true) {
+    const attemptStart = Date.now();
+
     try {
-      const global = await getGlobal();
-      const intervalMs = (global?.interval_seconds ?? 30) * 1000;
-      const lastPoll = global?.last_poll_at ? new Date(global.last_poll_at).getTime() : 0;
-      const elapsed = Date.now() - lastPoll;
-
-      if (elapsed < intervalMs) {
-        await sleep(Math.min(intervalMs - elapsed, 5000));
-        continue;
-      }
-
       if (postRunning) {
         await sleep(1000);
         continue;
@@ -59,6 +52,10 @@ async function postWorkerLoop() {
       postRunning = false;
       await updateScrapeStatus({ posts_running: false });
     }
+
+    const elapsed = Date.now() - attemptStart;
+    const wait = Math.max(0, intervalMs - elapsed);
+    if (wait > 0) await sleep(wait);
   }
 }
 

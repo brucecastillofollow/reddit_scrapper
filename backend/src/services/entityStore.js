@@ -93,23 +93,76 @@ const SUBREDDIT_TASK_COLUMNS = `
 `;
 
 /**
- * Coordinator batch (up to 200 tasks): top by new_posts (reset counters), due scraped, never scraped.
+ * Coordinator batch: up to batchSize subs per tick (default 20/min at 60s interval).
+ * 1) Subs with new_posts > hotMin, highest first.
+ * 2) If more than batchSize hot subs → top batchSize only.
+ * 3) Else fill remainder equally from due + never scraped.
  */
-export async function buildCommentCoordinatorTasks(limits) {
-  const { hot, due, never } = limits;
+export async function buildCommentCoordinatorTasks({
+  batchSize = 20,
+  hotNewPostsMin = 10,
+} = {}) {
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    const { rows: hotRows } = await client.query(
+    const { rows: hotCandidates } = await client.query(
       `SELECT ${SUBREDDIT_TASK_COLUMNS}
        FROM subreddit
+       WHERE new_posts > $1
        ORDER BY new_posts DESC, name
-       LIMIT $1
        FOR UPDATE`,
-      [hot],
+      [hotNewPostsMin],
     );
+
+    let hotRows = [];
+    let dueRows = [];
+    let neverRows = [];
+
+    if (hotCandidates.length > batchSize) {
+      hotRows = hotCandidates.slice(0, batchSize);
+    } else {
+      hotRows = hotCandidates;
+      const remainder = batchSize - hotRows.length;
+
+      if (remainder > 0) {
+        const dueLimit = Math.floor(remainder / 2);
+        const neverLimit = remainder - dueLimit;
+        const exclude = hotRows.map((r) => r.name);
+
+        if (dueLimit > 0) {
+          const dueParams = exclude.length > 0 ? [dueLimit, exclude] : [dueLimit];
+          const dueExclude =
+            exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
+          ({ rows: dueRows } = await client.query(
+            `SELECT ${SUBREDDIT_TASK_COLUMNS}
+             FROM subreddit
+             WHERE last_poll_at IS NOT NULL
+               AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+               ${dueExclude}
+             ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC, name
+             LIMIT $1`,
+            dueParams,
+          ));
+        }
+
+        if (neverLimit > 0) {
+          const neverParams = exclude.length > 0 ? [neverLimit, exclude] : [neverLimit];
+          const neverExclude =
+            exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
+          ({ rows: neverRows } = await client.query(
+            `SELECT ${SUBREDDIT_TASK_COLUMNS}
+             FROM subreddit
+             WHERE last_poll_at IS NULL
+               ${neverExclude}
+             ORDER BY new_posts DESC, total_posts DESC, name
+             LIMIT $1`,
+            neverParams,
+          ));
+        }
+      }
+    }
 
     const hotNames = hotRows.map((r) => r.name);
     if (hotNames.length > 0) {
@@ -117,25 +170,6 @@ export async function buildCommentCoordinatorTasks(limits) {
         hotNames,
       ]);
     }
-
-    const { rows: dueRows } = await client.query(
-      `SELECT ${SUBREDDIT_TASK_COLUMNS}
-       FROM subreddit
-       WHERE last_poll_at IS NOT NULL
-         AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
-       ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC, name
-       LIMIT $1`,
-      [due],
-    );
-
-    const { rows: neverRows } = await client.query(
-      `SELECT ${SUBREDDIT_TASK_COLUMNS}
-       FROM subreddit
-       WHERE last_poll_at IS NULL
-       ORDER BY new_posts DESC, total_posts DESC, name
-       LIMIT $1`,
-      [never],
-    );
 
     await client.query('COMMIT');
 
@@ -148,7 +182,16 @@ export async function buildCommentCoordinatorTasks(limits) {
       tasks.push(row);
     }
 
-    return { tasks, counts: { hot: hotRows.length, due: dueRows.length, never: neverRows.length } };
+    return {
+      tasks,
+      counts: {
+        hot: hotRows.length,
+        due: dueRows.length,
+        never: neverRows.length,
+        hot_candidates: hotCandidates.length,
+        batch_size: batchSize,
+      },
+    };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

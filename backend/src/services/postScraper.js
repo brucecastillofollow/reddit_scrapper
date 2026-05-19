@@ -1,8 +1,7 @@
 import { config } from '../config.js';
 import { getGlobal, updateGlobal, updateScrapeStatus, recordPostScrapeRun } from '../db.js';
-import { getNextEndpoint, runScrapeOnEndpoint } from './proxyPool.js';
+import { getNextEndpoint, getEndpointsForFailover, runScrapeOnEndpoint } from './proxyPool.js';
 import { fetchRedditJsonWithClient } from './redditFetch.js';
-import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
 import { toUtcDate, isAtOrBeforeUtc } from './scrapeBounds.js';
 import { logPostScrape } from './scrapeLogger.js';
 import {
@@ -107,8 +106,6 @@ function buildPostScrapeLogFields({
   bounds,
   newestTs,
   intervalSeconds,
-  allNew,
-  mostlyExisting,
   endpoint,
   pollAt,
 }) {
@@ -139,18 +136,15 @@ function buildPostScrapeLogFields({
     newest_processed_utc: bounds.newestTs?.toISOString() ?? null,
     downtime_sec: downtimeSec,
     backlog_span_sec: backlogSpanSec,
-    interval_before_sec: global.interval_seconds,
-    interval_after_sec: intervalSeconds,
-    interval_all_new: allNew,
-    interval_mostly_existing: mostlyExisting,
+    interval_sec: intervalSeconds,
     proxy_id: endpoint.id,
     proxy_index: endpoint.index,
   };
 }
 
-export async function runPostScrape() {
+/** One full new.json run on a single proxy (same session for all pages). */
+async function runPostScrapeOnEndpoint(endpoint) {
   const startedAt = Date.now();
-  const endpoint = getNextEndpoint();
   const global = await getGlobal();
   const stats = { new: 0, existing: 0, total: 0 };
   const ctx = createPostScrapeContext(global);
@@ -177,30 +171,14 @@ export async function runPostScrape() {
       newestTs = bounds.newestTs;
     }
 
-    const { allNew, mostlyExisting } = shouldAdjustInterval(
-      stats.existing,
-      stats.new,
-      stats.total,
-    );
-
-    let intervalSeconds = global.interval_seconds;
-
-    if (allNew && meta.after && !ctx.stopped) {
-      intervalSeconds = shortenInterval(intervalSeconds);
-    } else if (mostlyExisting) {
-      intervalSeconds = lengthenInterval(intervalSeconds);
-    }
-
     const pollAt = new Date();
     if (newestTs) {
       await updateGlobal({
         last_timestamp: newestTs,
-        interval_seconds: intervalSeconds,
         last_poll_at: pollAt,
       });
     } else {
       await updateGlobal({
-        interval_seconds: intervalSeconds,
         last_poll_at: pollAt,
       });
     }
@@ -225,9 +203,7 @@ export async function runPostScrape() {
         meta,
         bounds,
         newestTs,
-        intervalSeconds,
-        allNew,
-        mostlyExisting,
+        intervalSeconds: global.interval_seconds,
         endpoint,
         pollAt,
       }),
@@ -235,9 +211,6 @@ export async function runPostScrape() {
 
     return {
       stats,
-      intervalSeconds,
-      allNew,
-      mostlyExisting,
       pages,
       stopReason: ctx.stopReason,
       endpoint,
@@ -264,4 +237,27 @@ export async function runPostScrape() {
     });
     throw err;
   }
+}
+
+/** Try each proxy in order until one completes (session pinned per proxy for pagination). */
+export async function runPostScrape() {
+  const firstEndpoint = getNextEndpoint();
+  const endpoints = getEndpointsForFailover(firstEndpoint);
+  let lastErr;
+
+  for (let i = 0; i < endpoints.length; i += 1) {
+    const endpoint = endpoints[i];
+    try {
+      return await runPostScrapeOnEndpoint(endpoint);
+    } catch (err) {
+      lastErr = err;
+      const hasNext = i < endpoints.length - 1;
+      console.warn(
+        `[post-scrape] ${endpoint.id} failed (${err.message})` +
+          (hasNext ? ` — retrying on ${endpoints[i + 1].id}` : ' — no proxies left'),
+      );
+    }
+  }
+
+  throw lastErr ?? new Error('Post scrape failed: no proxies configured');
 }
