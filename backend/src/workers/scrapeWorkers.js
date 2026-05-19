@@ -29,7 +29,7 @@ async function postWorkerLoop() {
   while (true) {
     try {
       const global = await getGlobal();
-      const intervalMs = (global?.interval_seconds ?? 300) * 1000;
+      const intervalMs = (global?.interval_seconds ?? 30) * 1000;
       const lastPoll = global?.last_poll_at ? new Date(global.last_poll_at).getTime() : 0;
       const elapsed = Date.now() - lastPoll;
 
