@@ -92,15 +92,67 @@ const SUBREDDIT_TASK_COLUMNS = `
   name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts
 `;
 
+async function fetchDueAndNever(client, { dueLimit, neverLimit, exclude }) {
+  let dueRows = [];
+  let neverRows = [];
+
+  if (dueLimit > 0) {
+    const dueParams = exclude.length > 0 ? [dueLimit, exclude] : [dueLimit];
+    const dueExclude = exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
+    ({ rows: dueRows } = await client.query(
+      `SELECT ${SUBREDDIT_TASK_COLUMNS}
+       FROM subreddit
+       WHERE last_poll_at IS NOT NULL
+         AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+         ${dueExclude}
+       ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC, name
+       LIMIT $1`,
+      dueParams,
+    ));
+  }
+
+  if (neverLimit > 0) {
+    const neverParams = exclude.length > 0 ? [neverLimit, exclude] : [neverLimit];
+    const neverExclude = exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
+    ({ rows: neverRows } = await client.query(
+      `SELECT ${SUBREDDIT_TASK_COLUMNS}
+       FROM subreddit
+       WHERE last_poll_at IS NULL
+         ${neverExclude}
+       ORDER BY new_posts DESC, total_posts DESC, name
+       LIMIT $1`,
+      neverParams,
+    ));
+  }
+
+  return { dueRows, neverRows };
+}
+
+function fillRemainderDueNever(client, batchSize, priorityRows) {
+  const remainder = batchSize - priorityRows.length;
+  if (remainder <= 0) {
+    return { dueRows: [], neverRows: [] };
+  }
+  const dueLimit = Math.floor(remainder / 2);
+  const neverLimit = remainder - dueLimit;
+  return fetchDueAndNever(client, {
+    dueLimit,
+    neverLimit,
+    exclude: priorityRows.map((r) => r.name),
+  });
+}
+
 /**
  * Coordinator batch: up to batchSize subs per tick (default 20/min at 60s interval).
- * 1) Subs with new_posts > hotMin, highest first.
- * 2) If more than batchSize hot subs → top batchSize only.
- * 3) Else fill remainder equally from due + never scraped.
+ * 1) Subs with new_posts > hotMin; if more than batchSize → top batchSize only.
+ * 2) If none > hotMin → up to warmLimit subs with new_posts > warmMin.
+ * 3) Fill remainder equally from due + never scraped.
  */
 export async function buildCommentCoordinatorTasks({
   batchSize = 20,
   hotNewPostsMin = 10,
+  warmNewPostsMin = 5,
+  warmNewPostsLimit = 10,
 } = {}) {
   const client = await pool.connect();
 
@@ -117,57 +169,34 @@ export async function buildCommentCoordinatorTasks({
     );
 
     let hotRows = [];
+    let warmRows = [];
     let dueRows = [];
     let neverRows = [];
+    let warmCandidates = 0;
 
     if (hotCandidates.length > batchSize) {
       hotRows = hotCandidates.slice(0, batchSize);
-    } else {
+    } else if (hotCandidates.length > 0) {
       hotRows = hotCandidates;
-      const remainder = batchSize - hotRows.length;
-
-      if (remainder > 0) {
-        const dueLimit = Math.floor(remainder / 2);
-        const neverLimit = remainder - dueLimit;
-        const exclude = hotRows.map((r) => r.name);
-
-        if (dueLimit > 0) {
-          const dueParams = exclude.length > 0 ? [dueLimit, exclude] : [dueLimit];
-          const dueExclude =
-            exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
-          ({ rows: dueRows } = await client.query(
-            `SELECT ${SUBREDDIT_TASK_COLUMNS}
-             FROM subreddit
-             WHERE last_poll_at IS NOT NULL
-               AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
-               ${dueExclude}
-             ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC, name
-             LIMIT $1`,
-            dueParams,
-          ));
-        }
-
-        if (neverLimit > 0) {
-          const neverParams = exclude.length > 0 ? [neverLimit, exclude] : [neverLimit];
-          const neverExclude =
-            exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
-          ({ rows: neverRows } = await client.query(
-            `SELECT ${SUBREDDIT_TASK_COLUMNS}
-             FROM subreddit
-             WHERE last_poll_at IS NULL
-               ${neverExclude}
-             ORDER BY new_posts DESC, total_posts DESC, name
-             LIMIT $1`,
-            neverParams,
-          ));
-        }
-      }
+      ({ dueRows, neverRows } = await fillRemainderDueNever(client, batchSize, hotRows));
+    } else {
+      const { rows: warmCandidatesRows } = await client.query(
+        `SELECT ${SUBREDDIT_TASK_COLUMNS}
+         FROM subreddit
+         WHERE new_posts > $1
+         ORDER BY new_posts DESC, name
+         FOR UPDATE`,
+        [warmNewPostsMin],
+      );
+      warmCandidates = warmCandidatesRows.length;
+      warmRows = warmCandidatesRows.slice(0, warmNewPostsLimit);
+      ({ dueRows, neverRows } = await fillRemainderDueNever(client, batchSize, warmRows));
     }
 
-    const hotNames = hotRows.map((r) => r.name);
-    if (hotNames.length > 0) {
+    const resetNames = [...hotRows, ...warmRows].map((r) => r.name);
+    if (resetNames.length > 0) {
       await client.query(`UPDATE subreddit SET new_posts = 0 WHERE name = ANY($1::varchar[])`, [
-        hotNames,
+        resetNames,
       ]);
     }
 
@@ -176,7 +205,7 @@ export async function buildCommentCoordinatorTasks({
     const seen = new Set();
     const tasks = [];
 
-    for (const row of [...hotRows, ...dueRows, ...neverRows]) {
+    for (const row of [...hotRows, ...warmRows, ...dueRows, ...neverRows]) {
       if (seen.has(row.name)) continue;
       seen.add(row.name);
       tasks.push(row);
@@ -186,9 +215,11 @@ export async function buildCommentCoordinatorTasks({
       tasks,
       counts: {
         hot: hotRows.length,
+        warm: warmRows.length,
         due: dueRows.length,
         never: neverRows.length,
         hot_candidates: hotCandidates.length,
+        warm_candidates: warmCandidates,
         batch_size: batchSize,
       },
     };

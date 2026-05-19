@@ -28,8 +28,9 @@ alwaysApply: true
    - Upsert `posts`, register `global_ids`, auto-add `subreddit`
 2. **Comment workers** (1 per proxy + direct): coordinator every 60s enqueues up to `COMMENT_SCRAPES_PER_MINUTE` (default 20)
    - Subs with `new_posts > COMMENT_HOT_NEW_POSTS_MIN` (default 10), highest first; if more than batch size → top N only
-   - Else fill remainder equally from due (`interval` elapsed) + never scraped (`last_poll_at` NULL)
-   - Reset `new_posts` to 0 for selected hot subs
+   - If none hot: up to `COMMENT_WARM_NEW_POSTS_LIMIT` (10) subs with `new_posts > COMMENT_WARM_NEW_POSTS_MIN` (5)
+   - Fill remainder equally from due (`interval` elapsed) + never scraped (`last_poll_at` NULL)
+   - Reset `new_posts` to 0 for selected hot/warm subs
    - Interval targets ~100 **new** comments: DB weighted rate (7d, exponential decay) + scrape extrapolation; `max()` when last run &lt; 100
    - Post scrape increments `total_posts` and `new_posts` per new post
    - On error: re-queue task + sleep `COMMENT_IDLE_SLEEP_SECONDS` (default 10s)

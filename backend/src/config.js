@@ -41,6 +41,9 @@ export const config = {
   commentScrapesPerMinute: num(process.env.COMMENT_SCRAPES_PER_MINUTE, 20),
   /** Prefer subs with new_posts greater than this (from post scraper). */
   commentHotNewPostsMin: num(process.env.COMMENT_HOT_NEW_POSTS_MIN, 10),
+  /** If none above hot min: take up to this many subs with new_posts above warm min. */
+  commentWarmNewPostsMin: num(process.env.COMMENT_WARM_NEW_POSTS_MIN, 5),
+  commentWarmNewPostsLimit: num(process.env.COMMENT_WARM_NEW_POSTS_LIMIT, 10),
   /** Target comments per scrape; interval ≈ seconds until this many comments appear. */
   commentTargetBatchSize: num(process.env.COMMENT_TARGET_BATCH_SIZE, 100),
   commentEfficiencyDays: num(process.env.COMMENT_EFFICIENCY_DAYS, 7),
