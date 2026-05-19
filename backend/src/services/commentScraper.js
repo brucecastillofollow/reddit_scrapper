@@ -15,6 +15,7 @@ import {
   updateComment,
   updateSubreddit,
   recordSubredditCommentScrape,
+  resetSubredditNewPosts,
 } from './entityStore.js';
 
 function commentsUrl(subreddit) {
@@ -218,6 +219,7 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       last_poll_at: pollAt,
       last_scrape_new: stats.new,
     });
+    await resetSubredditNewPosts(name);
 
     const durationMs = Date.now() - startedAt;
     // await logCommentScrapeTiming({

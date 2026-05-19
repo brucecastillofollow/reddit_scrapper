@@ -88,6 +88,11 @@ export async function recordSubredditNewPost(name) {
   );
 }
 
+/** After a successful comment scrape — clears post backlog counter for this subreddit. */
+export async function resetSubredditNewPosts(name) {
+  await pool.query(`UPDATE subreddit SET new_posts = 0 WHERE name = $1`, [name]);
+}
+
 const SUBREDDIT_TASK_COLUMNS = `
   name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts
 `;
@@ -142,11 +147,47 @@ function fillRemainderDueNever(client, batchSize, priorityRows) {
   });
 }
 
+async function fetchWarmRows(client, { warmMin, hotMin, exclude, limit, hotBandOnly }) {
+  if (limit <= 0) return { rows: [], candidates: 0 };
+
+  const params = [warmMin];
+  let n = 2;
+  let bandClause = '';
+  if (hotBandOnly) {
+    bandClause = `AND new_posts <= $${n}`;
+    params.push(hotMin);
+    n += 1;
+  }
+  let excludeClause = '';
+  if (exclude.length > 0) {
+    excludeClause = `AND name <> ALL($${n}::varchar[])`;
+    params.push(exclude);
+    n += 1;
+  }
+  params.push(limit);
+  const limitParam = `$${n}`;
+
+  const { rows: candidates } = await client.query(
+    `SELECT ${SUBREDDIT_TASK_COLUMNS}
+     FROM subreddit
+     WHERE new_posts > $1
+       ${bandClause}
+       ${excludeClause}
+     ORDER BY new_posts DESC, name
+     LIMIT ${limitParam}
+     FOR UPDATE`,
+    params,
+  );
+
+  return { rows: candidates, candidates: candidates.length };
+}
+
 /**
  * Coordinator batch: up to batchSize subs per tick (default 20/min at 60s interval).
- * 1) Subs with new_posts > hotMin; if more than batchSize → top batchSize only.
- * 2) If none > hotMin → up to warmLimit subs with new_posts > warmMin.
- * 3) Fill remainder equally from due + never scraped.
+ * 1) All hot (new_posts > hotMin), capped at batchSize.
+ * 2) Warm (new_posts in (warmMin, hotMin] when hot exists; else > warmMin), up to warmLimit.
+ * 3) Remainder split: due (interval elapsed) + never scraped.
+ * new_posts is reset to 0 only after a successful comment scrape (see commentScraper).
  */
 export async function buildCommentCoordinatorTasks({
   batchSize = 20,
@@ -176,28 +217,32 @@ export async function buildCommentCoordinatorTasks({
 
     if (hotCandidates.length > batchSize) {
       hotRows = hotCandidates.slice(0, batchSize);
-    } else if (hotCandidates.length > 0) {
-      hotRows = hotCandidates;
-      ({ dueRows, neverRows } = await fillRemainderDueNever(client, batchSize, hotRows));
     } else {
-      const { rows: warmCandidatesRows } = await client.query(
-        `SELECT ${SUBREDDIT_TASK_COLUMNS}
-         FROM subreddit
-         WHERE new_posts > $1
-         ORDER BY new_posts DESC, name
-         FOR UPDATE`,
-        [warmNewPostsMin],
-      );
-      warmCandidates = warmCandidatesRows.length;
-      warmRows = warmCandidatesRows.slice(0, warmNewPostsLimit);
-      ({ dueRows, neverRows } = await fillRemainderDueNever(client, batchSize, warmRows));
-    }
+      hotRows = hotCandidates;
 
-    const resetNames = [...hotRows, ...warmRows].map((r) => r.name);
-    if (resetNames.length > 0) {
-      await client.query(`UPDATE subreddit SET new_posts = 0 WHERE name = ANY($1::varchar[])`, [
-        resetNames,
-      ]);
+      const prioritySoFar = [...hotRows];
+      const warmSlots = Math.min(
+        warmNewPostsLimit,
+        Math.max(0, batchSize - prioritySoFar.length),
+      );
+
+      if (warmSlots > 0) {
+        const hotBandOnly = hotRows.length > 0;
+        const { rows, candidates } = await fetchWarmRows(client, {
+          warmMin: warmNewPostsMin,
+          hotMin: hotNewPostsMin,
+          exclude: prioritySoFar.map((r) => r.name),
+          limit: warmSlots,
+          hotBandOnly,
+        });
+        warmCandidates = candidates;
+        warmRows = rows;
+        prioritySoFar.push(...warmRows);
+      }
+
+      if (prioritySoFar.length < batchSize) {
+        ({ dueRows, neverRows } = await fillRemainderDueNever(client, batchSize, prioritySoFar));
+      }
     }
 
     await client.query('COMMIT');
