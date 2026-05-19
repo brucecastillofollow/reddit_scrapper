@@ -44,6 +44,7 @@ async function processPostChild(child, stats, bounds, ctx) {
   if (ctx.watermark && isAtOrBeforeUtc(createdUtc, ctx.watermark)) {
     ctx.stopped = true;
     ctx.stopReason = 'watermark';
+    console.log("processPostChild stopped by watermark", ctx, createdUtc);
     return bounds;
   }
 
@@ -158,18 +159,25 @@ export async function runPostScrape() {
   let pages = 0;
   let meta = { after: null, reddit_dist: 0 };
 
+  console.log("running post scrape", config.maxPaginationPages);
+
   try {
     let { data: listing } = await fetchNewPage(endpoint);
     pages = 1;
     meta = await processListing(listing, stats, bounds, ctx);
     bounds = meta.bounds;
+    console.log("datenow", Date.now());
+    console.log("running post scrape", ctx.stopped, meta, pages);
 
     while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
       ({ data: listing } = await fetchNewPage(endpoint, { after: meta.after }));
       pages += 1;
       meta = await processListing(listing, stats, bounds, ctx);
       bounds = meta.bounds;
+      console.log("running post scrape", ctx.stopped, meta, pages);
     }
+
+    console.log("running post scrape", ctx.stopped, meta.after, pages);
 
     if (bounds.newestTs && (!newestTs || bounds.newestTs > newestTs)) {
       newestTs = bounds.newestTs;
