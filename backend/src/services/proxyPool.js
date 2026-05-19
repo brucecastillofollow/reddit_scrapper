@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { wrapper } from 'axios-cookiejar-support';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -13,6 +12,11 @@ import {
   persistCookieJar,
   schedulePersistCookieJar,
 } from './proxyCookieJar.js';
+import {
+  clearAllProxyHealth,
+  getProxyHealthSnapshot,
+  isProxyQuarantined,
+} from './proxyHealth.js';
 
 const SUPPORTED_PROTOCOLS = new Set(['socks5', 'socks4', 'http', 'https']);
 
@@ -165,7 +169,14 @@ export function rebuildPool() {
   proxyTails.clear();
   proxyInFlight.clear();
   clearAllCookieJars();
+  clearAllProxyHealth();
 }
+
+export {
+  isProxyQuarantined,
+  getProxyHealthSnapshot,
+  getProxyQuarantineRemainingMs,
+} from './proxyHealth.js';
 
 export function getPool() {
   return pool;
@@ -185,8 +196,10 @@ export function getPoolSummary() {
 }
 
 export function getPoolStats() {
+  const healthById = new Map(getProxyHealthSnapshot().map((h) => [h.id, h]));
   return pool.map((ep) => {
     const counts = getProxyRequestCounts(ep.id);
+    const health = healthById.get(ep.id);
     return {
       id: ep.id,
       index: ep.index,
@@ -196,11 +209,14 @@ export function getPoolStats() {
       requests_total: counts.total,
       requests_success: counts.success,
       requests_failed: counts.failed,
+      quarantined: health?.quarantined ?? false,
+      quarantine_remaining_sec: health?.quarantine_remaining_sec ?? 0,
+      consecutive_403: health?.consecutive_403 ?? 0,
     };
   });
 }
 
-/** Round-robin: pick one proxy for an entire scrape run (all pages share it). */
+/** Round-robin: pick one proxy for an entire scrape run (skips quarantined when possible). */
 export function getNextEndpoint() {
   if (pool.length === 0) {
     return {
@@ -211,7 +227,17 @@ export function getNextEndpoint() {
       index: 0,
     };
   }
-  const endpoint = pool[index % pool.length];
+
+  const n = pool.length;
+  for (let i = 0; i < n; i += 1) {
+    const endpoint = pool[(index + i) % n];
+    if (!isProxyQuarantined(endpoint)) {
+      index = (index + i + 1) % n;
+      return endpoint;
+    }
+  }
+
+  const endpoint = pool[index % n];
   index += 1;
   return endpoint;
 }
@@ -289,16 +315,39 @@ export function redditBootstrapHeaders() {
   };
 }
 
+/** Attach tough-cookie jar via interceptors (works with SOCKS/HTTP proxy agents). */
+function attachCookieJar(client, jar) {
+  client.interceptors.request.use(async (reqConfig) => {
+    const url = axios.getUri(reqConfig);
+    const cookieHeader = await jar.getCookieString(url);
+    if (cookieHeader) {
+      reqConfig.headers = reqConfig.headers ?? {};
+      reqConfig.headers.Cookie = cookieHeader;
+    }
+    return reqConfig;
+  });
+
+  client.interceptors.response.use(async (response) => {
+    const url = axios.getUri(response.config);
+    const setCookie = response.headers['set-cookie'];
+    if (setCookie) {
+      const list = Array.isArray(setCookie) ? setCookie : [setCookie];
+      for (const raw of list) {
+        await jar.setCookie(raw, url, { ignoreError: true });
+      }
+    }
+    return response;
+  });
+}
+
 export async function createRedditClient(endpoint) {
   const jar = await getCookieJar(endpoint);
-  return wrapper(
-    axios.create({
-      jar,
-      withCredentials: true,
-      timeout: 30000,
-      ...createAgents(endpoint),
-    }),
-  );
+  const client = axios.create({
+    timeout: 30000,
+    ...createAgents(endpoint),
+  });
+  attachCookieJar(client, jar);
+  return client;
 }
 
 /**
@@ -347,6 +396,9 @@ export async function checkEndpointHealth(endpoint) {
 
 export async function countHealthyProxies() {
   if (pool.length === 0) return 0;
-  const results = await Promise.all(pool.map((ep) => checkEndpointHealth(ep)));
-  return results.filter(Boolean).length;
+  let healthy = 0;
+  for (const ep of pool) {
+    if (await checkEndpointHealth(ep)) healthy += 1;
+  }
+  return healthy;
 }

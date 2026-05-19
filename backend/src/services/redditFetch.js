@@ -9,6 +9,7 @@ import {
   runOnProxy,
 } from './proxyPool.js';
 import { persistCookieJar, schedulePersistCookieJar } from './proxyCookieJar.js';
+import { recordProxyHttpError, recordProxySuccess } from './proxyHealth.js';
 import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
 /**
@@ -24,12 +25,13 @@ export async function fetchRedditJsonWithClient(client, url, params, meta, endpo
       headers: redditRequestHeaders(url),
     });
     recordProxyRequest(endpoint, { success: true });
+    recordProxySuccess(endpoint);
     schedulePersistCookieJar(endpoint);
     return { data, proxyIndex: endpoint.index, endpoint };
   } catch (err) {
     recordProxyRequest(endpoint, { success: false });
     const status = err.response?.status ?? null;
-    if (status === 403) {
+    if (recordProxyHttpError(endpoint, status)) {
       await invalidateRedditSession(endpoint);
     }
     const proxyInfo = describeEndpoint(endpoint);

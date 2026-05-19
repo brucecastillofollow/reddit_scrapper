@@ -51,6 +51,24 @@ export const config = {
     2,
   ),
   proxyCooldownMaxSeconds: num(process.env.PROXY_COOLDOWN_MAX_SECONDS, 10),
+  /** Delay each comment worker by index × N seconds on startup (avoids resume burst). */
+  workerStartupStaggerSeconds: num(process.env.WORKER_STARTUP_STAGGER_SECONDS, 5),
+  /** Wait before coordinator enqueues subs after backend start. */
+  commentCoordinatorStartupDelaySeconds: num(
+    process.env.COMMENT_COORDINATOR_STARTUP_DELAY_SECONDS,
+    30,
+  ),
+  /** Consecutive 403s before proxy is quarantined from scraping. */
+  proxySkipAfterConsecutive403: num(process.env.PROXY_SKIP_AFTER_CONSECUTIVE_403, 5),
+  /** How long a quarantined proxy is skipped. */
+  proxyQuarantineMinutes: num(process.env.PROXY_QUARANTINE_MINUTES, 30),
+  /** Clear cookies only after this many 403s (unless recent success). */
+  proxyCookieInvalidateAfter403: num(process.env.PROXY_COOKIE_INVALIDATE_AFTER_403, 3),
+  /** Do not clear cookies if proxy succeeded within this many minutes. */
+  proxyCookieKeepAfterSuccessMinutes: num(
+    process.env.PROXY_COOKIE_KEEP_AFTER_SUCCESS_MINUTES,
+    15,
+  ),
   useDirect: bool(process.env.USE_DIRECT, true),
   dbResetOnStart: bool(process.env.DB_RESET_ON_START, false),
   proxyUrls: loadProxyUrls(),

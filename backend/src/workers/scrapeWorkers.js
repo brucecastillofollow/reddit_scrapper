@@ -1,3 +1,4 @@
+import { config } from '../config.js';
 import { getGlobal } from '../db.js';
 import { updateScrapeStatus } from '../db.js';
 import { countHealthyProxies } from '../services/proxyPool.js';
@@ -19,6 +20,12 @@ export function getCommentQueueStatus() {
 
 /** Single post-scrape loop (dedicated async worker). */
 async function postWorkerLoop() {
+  const startupDelayMs = config.commentCoordinatorStartupDelaySeconds * 1000;
+  if (startupDelayMs > 0) {
+    console.log(`[post-worker] startup delay ${config.commentCoordinatorStartupDelaySeconds}s`);
+    await sleep(startupDelayMs);
+  }
+
   while (true) {
     try {
       const global = await getGlobal();
@@ -56,6 +63,7 @@ async function postWorkerLoop() {
 }
 
 async function proxyHealthLoop() {
+  await sleep(90_000);
   while (true) {
     try {
       const healthy = await countHealthyProxies();
