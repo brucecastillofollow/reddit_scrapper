@@ -1,9 +1,18 @@
 import axios from 'axios';
+import { wrapper } from 'axios-cookiejar-support';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { config } from '../config.js';
 import { maskProxyUrl } from './scrapeLogger.js';
+import {
+  clearAllCookieJars,
+  clearCookieJar,
+  getCookieJar,
+  hasRedditSession,
+  persistCookieJar,
+  schedulePersistCookieJar,
+} from './proxyCookieJar.js';
 
 const SUPPORTED_PROTOCOLS = new Set(['socks5', 'socks4', 'http', 'https']);
 
@@ -84,8 +93,13 @@ export function isProxyInFlight(endpoint) {
  */
 export async function runScrapeOnEndpoint(endpoint, fn) {
   return runOnProxy(endpoint, async () => {
-    const client = createRedditClient(endpoint);
-    return fn(client);
+    const client = await createRedditClient(endpoint);
+    await ensureRedditSession(client, endpoint);
+    try {
+      return await fn(client);
+    } finally {
+      await persistCookieJar(endpoint);
+    }
   });
 }
 
@@ -150,6 +164,7 @@ export function rebuildPool() {
   lastUsedAt.clear();
   proxyTails.clear();
   proxyInFlight.clear();
+  clearAllCookieJars();
 }
 
 export function getPool() {
@@ -257,23 +272,72 @@ export function redditRequestHeaders(url = '') {
   return headers;
 }
 
-export function createRedditClient(endpoint) {
-  return axios.create({
-    timeout: 30000,
-    headers: redditRequestHeaders(),
-    ...createAgents(endpoint),
-  });
+/** First visit to www.reddit.com — collects anonymous session cookies (loid, etc.). */
+export function redditBootstrapHeaders() {
+  return {
+    'User-Agent': config.redditUserAgent,
+    Accept:
+      'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    Connection: 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+  };
+}
+
+export async function createRedditClient(endpoint) {
+  const jar = await getCookieJar(endpoint);
+  return wrapper(
+    axios.create({
+      jar,
+      withCredentials: true,
+      timeout: 30000,
+      ...createAgents(endpoint),
+    }),
+  );
+}
+
+/**
+ * Visit Reddit homepage once per proxy to obtain anonymous cookies, like a browser.
+ * Cookies are stored in a per-proxy jar and reused on later .json requests.
+ */
+export async function ensureRedditSession(client, endpoint) {
+  if (!config.redditCookieBootstrap) return;
+  if (await hasRedditSession(endpoint)) return;
+
+  await enforceProxyCooldown(endpoint);
+  try {
+    await client.get('https://www.reddit.com/', {
+      headers: redditBootstrapHeaders(),
+      maxRedirects: 5,
+      validateStatus: (status) => status < 500,
+    });
+    schedulePersistCookieJar(endpoint);
+  } catch {
+    /* bootstrap failed — .json may still work */
+  }
+}
+
+/** Drop stored cookies for a proxy (e.g. after 403) so the next scrape re-bootstraps. */
+export async function invalidateRedditSession(endpoint) {
+  await clearCookieJar(endpoint);
 }
 
 export async function checkEndpointHealth(endpoint) {
   return runOnProxy(endpoint, async () => {
     try {
-      const client = createRedditClient(endpoint);
+      const client = await createRedditClient(endpoint);
+      await ensureRedditSession(client, endpoint);
       await enforceProxyCooldown(endpoint);
       await client.get('https://www.reddit.com/new.json', {
         params: { limit: 1 },
         headers: redditRequestHeaders('https://www.reddit.com/new.json'),
       });
+      schedulePersistCookieJar(endpoint);
       return true;
     } catch {
       return false;

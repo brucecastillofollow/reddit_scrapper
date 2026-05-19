@@ -1,11 +1,14 @@
 import {
   createRedditClient,
+  ensureRedditSession,
   enforceProxyCooldown,
   getNextEndpoint,
+  invalidateRedditSession,
   recordProxyRequest,
   redditRequestHeaders,
   runOnProxy,
 } from './proxyPool.js';
+import { persistCookieJar, schedulePersistCookieJar } from './proxyCookieJar.js';
 import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
 /**
@@ -21,9 +24,14 @@ export async function fetchRedditJsonWithClient(client, url, params, meta, endpo
       headers: redditRequestHeaders(url),
     });
     recordProxyRequest(endpoint, { success: true });
+    schedulePersistCookieJar(endpoint);
     return { data, proxyIndex: endpoint.index, endpoint };
   } catch (err) {
     recordProxyRequest(endpoint, { success: false });
+    const status = err.response?.status ?? null;
+    if (status === 403) {
+      await invalidateRedditSession(endpoint);
+    }
     const proxyInfo = describeEndpoint(endpoint);
     await logScrapeFailure({
       kind: meta.kind || 'fetch',
@@ -47,8 +55,13 @@ export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = nu
   const ep = endpoint ?? getNextEndpoint();
 
   return runOnProxy(ep, async () => {
-    const client = createRedditClient(ep);
-    return fetchRedditJsonWithClient(client, url, params, meta, ep);
+    const client = await createRedditClient(ep);
+    await ensureRedditSession(client, ep);
+    try {
+      return await fetchRedditJsonWithClient(client, url, params, meta, ep);
+    } finally {
+      await persistCookieJar(ep);
+    }
   });
 }
 

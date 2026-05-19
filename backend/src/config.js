@@ -22,6 +22,9 @@ export const config = {
   scrapePostLog: process.env.SCRAPE_POST_LOG || './data/logs/post-scrape.log',
   retentionDays: num(process.env.RETENTION_DAYS, 30),
   redditUserAgent: process.env.REDDIT_USER_AGENT || 'reddit-scraper/1.0 (research project)',
+  /** Per-proxy cookie storage (anonymous www.reddit.com session). */
+  redditCookieDir: process.env.REDDIT_COOKIE_DIR || './data/cookies',
+  redditCookieBootstrap: bool(process.env.REDDIT_COOKIE_BOOTSTRAP, true),
   intervalMinSeconds: num(process.env.INTERVAL_MIN_SECONDS, 60),
   intervalMaxSeconds: num(process.env.INTERVAL_MAX_SECONDS, 3600),
   intervalShrinkFactor: Number(process.env.INTERVAL_SHRINK_FACTOR) || 0.7,
