@@ -23,10 +23,9 @@ alwaysApply: true
 
 ## Scraping workers
 1. **Post worker** (single loop): `https://www.reddit.com/new.json`
-   - One proxy per run; paginate with `?after={after}` on that same proxy until done
-   - Upsert `posts`, register `global_ids`, auto-add `subreddit` (`last_timestamp` NULL, 600s interval)
-   - All new in batch → paginate until existing found → **shorten** global interval
-   - >50 existing in batch → **lengthen** global interval
+   - One proxy per run; paginate until **watermark** (`global.last_timestamp`), not first duplicate
+   - Log: `data/logs/post-scrape.log` — pages, new/existing, stop_reason, downtime, backlog span, pagination_end
+   - Upsert `posts`, register `global_ids`, auto-add `subreddit`
 2. **Comment workers** (1 per proxy + direct): coordinator every 60s enqueues up to 200 tasks
    - 100 subs with highest `new_posts` (then reset `new_posts` to 0)
    - 50 due subs (`last_poll_at` set and interval elapsed)

@@ -4,6 +4,7 @@ import { getNextEndpoint } from './proxyPool.js';
 import { fetchRedditJson } from './redditFetch.js';
 import { shortenInterval, lengthenInterval, shouldAdjustInterval } from './intervalAdjust.js';
 import { toUtcDate, isAtOrBeforeUtc } from './scrapeBounds.js';
+import { logPostScrape } from './scrapeLogger.js';
 import {
   typedFieldsFromPost,
   postExists,
@@ -22,9 +23,17 @@ function createPostScrapeContext(global) {
   return { watermark, stopped: false, stopReason: null };
 }
 
-async function processPostChild(child, stats, newestTs, ctx) {
-  if (child.kind !== 't3' || !child.data?.id) return newestTs;
-  if (ctx.stopped) return newestTs;
+function mergeBounds(bounds, createdUtc) {
+  if (!createdUtc) return bounds;
+  let { oldestTs, newestTs } = bounds;
+  if (!oldestTs || createdUtc < oldestTs) oldestTs = createdUtc;
+  if (!newestTs || createdUtc > newestTs) newestTs = createdUtc;
+  return { oldestTs, newestTs };
+}
+
+async function processPostChild(child, stats, bounds, ctx) {
+  if (child.kind !== 't3' || !child.data?.id) return bounds;
+  if (ctx.stopped) return bounds;
 
   const d = child.data;
   const type = 't3';
@@ -35,13 +44,10 @@ async function processPostChild(child, stats, newestTs, ctx) {
   if (ctx.watermark && isAtOrBeforeUtc(createdUtc, ctx.watermark)) {
     ctx.stopped = true;
     ctx.stopReason = 'watermark';
-    return newestTs;
+    return bounds;
   }
 
-  let latest = newestTs;
-  if (!newestTs || createdUtc > newestTs) {
-    latest = createdUtc;
-  }
+  const nextBounds = mergeBounds(bounds, createdUtc);
 
   await ensureSubreddit(fields.subreddit);
 
@@ -55,29 +61,29 @@ async function processPostChild(child, stats, newestTs, ctx) {
     await updatePost(fields);
     stats.existing += 1;
     stats.total += 1;
-    return latest;
+    return nextBounds;
   }
 
   await insertPost(fields);
   await recordSubredditNewPost(fields.subreddit);
   stats.new += 1;
   stats.total += 1;
-  return latest;
+  return nextBounds;
 }
 
-async function processListing(listing, stats, ctx) {
+async function processListing(listing, stats, bounds, ctx) {
   const children = listing?.data?.children ?? [];
-  let newestTs = null;
+  let nextBounds = bounds;
 
   for (const child of children) {
     if (ctx.stopped) break;
-    newestTs = await processPostChild(child, stats, newestTs, ctx);
+    nextBounds = await processPostChild(child, stats, nextBounds, ctx);
   }
 
   return {
     after: listing?.data?.after ?? null,
-    dist: listing?.data?.dist ?? children.length,
-    newestTs,
+    reddit_dist: listing?.data?.dist ?? children.length,
+    bounds: nextBounds,
   };
 }
 
@@ -90,73 +96,169 @@ async function fetchNewPage(endpoint, params = {}) {
   );
 }
 
+function buildPostScrapeLogFields({
+  startedAt,
+  global,
+  stats,
+  ctx,
+  pages,
+  meta,
+  bounds,
+  newestTs,
+  intervalSeconds,
+  allNew,
+  mostlyExisting,
+  endpoint,
+  pollAt,
+}) {
+  const watermarkBefore = global.last_timestamp ? toUtcDate(global.last_timestamp) : null;
+  const lastPollBefore = global.last_poll_at ? toUtcDate(global.last_poll_at) : null;
+  const downtimeSec = lastPollBefore
+    ? Math.max(0, Math.floor((pollAt.getTime() - lastPollBefore.getTime()) / 1000))
+    : null;
+  const backlogSpanSec =
+    watermarkBefore && bounds.newestTs
+      ? Math.max(0, Math.floor((bounds.newestTs.getTime() - watermarkBefore.getTime()) / 1000))
+      : null;
+
+  return {
+    target: 'new.json',
+    posts_new: stats.new,
+    posts_existing: stats.existing,
+    posts_total: stats.total,
+    pages,
+    reddit_dist_last_page: meta.reddit_dist,
+    stop_reason: ctx.stopReason,
+    pagination_exhausted: !ctx.stopped && !meta.after,
+    hit_max_pages: pages >= config.maxPaginationPages && Boolean(meta.after),
+    had_after_on_stop: Boolean(meta.after),
+    watermark_before_utc: watermarkBefore?.toISOString() ?? null,
+    watermark_after_utc: newestTs?.toISOString() ?? null,
+    oldest_processed_utc: bounds.oldestTs?.toISOString() ?? null,
+    newest_processed_utc: bounds.newestTs?.toISOString() ?? null,
+    downtime_sec: downtimeSec,
+    backlog_span_sec: backlogSpanSec,
+    interval_before_sec: global.interval_seconds,
+    interval_after_sec: intervalSeconds,
+    interval_all_new: allNew,
+    interval_mostly_existing: mostlyExisting,
+    proxy_id: endpoint.id,
+    proxy_index: endpoint.index,
+  };
+}
+
 export async function runPostScrape() {
+  const startedAt = Date.now();
   const endpoint = getNextEndpoint();
   const global = await getGlobal();
   const stats = { new: 0, existing: 0, total: 0 };
   const ctx = createPostScrapeContext(global);
+  let bounds = { oldestTs: null, newestTs: null };
   let newestTs = global.last_timestamp ? toUtcDate(global.last_timestamp) : null;
   let pages = 0;
+  let meta = { after: null, reddit_dist: 0 };
 
-  let { data: listing } = await fetchNewPage(endpoint);
-  pages = 1;
+  try {
+    let { data: listing } = await fetchNewPage(endpoint);
+    pages = 1;
+    meta = await processListing(listing, stats, bounds, ctx);
+    bounds = meta.bounds;
 
-  let meta = await processListing(listing, stats, ctx);
-  if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
-    newestTs = meta.newestTs;
-  }
-
-  while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
-    ({ data: listing } = await fetchNewPage(endpoint, { after: meta.after }));
-    pages += 1;
-    meta = await processListing(listing, stats, ctx);
-    if (meta.newestTs && (!newestTs || meta.newestTs > newestTs)) {
-      newestTs = meta.newestTs;
+    while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
+      ({ data: listing } = await fetchNewPage(endpoint, { after: meta.after }));
+      pages += 1;
+      meta = await processListing(listing, stats, bounds, ctx);
+      bounds = meta.bounds;
     }
-  }
 
-  const { allNew, mostlyExisting } = shouldAdjustInterval(
-    stats.existing,
-    stats.new,
-    stats.total,
-  );
+    if (bounds.newestTs && (!newestTs || bounds.newestTs > newestTs)) {
+      newestTs = bounds.newestTs;
+    }
 
-  let intervalSeconds = global.interval_seconds;
+    const { allNew, mostlyExisting } = shouldAdjustInterval(
+      stats.existing,
+      stats.new,
+      stats.total,
+    );
 
-  if (allNew && meta.after && !ctx.stopped) {
-    intervalSeconds = shortenInterval(intervalSeconds);
-  } else if (mostlyExisting) {
-    intervalSeconds = lengthenInterval(intervalSeconds);
-  }
+    let intervalSeconds = global.interval_seconds;
 
-  const pollAt = new Date();
-  if (newestTs) {
-    await updateGlobal({
-      last_timestamp: newestTs,
-      interval_seconds: intervalSeconds,
-      last_poll_at: pollAt,
+    if (allNew && meta.after && !ctx.stopped) {
+      intervalSeconds = shortenInterval(intervalSeconds);
+    } else if (mostlyExisting) {
+      intervalSeconds = lengthenInterval(intervalSeconds);
+    }
+
+    const pollAt = new Date();
+    if (newestTs) {
+      await updateGlobal({
+        last_timestamp: newestTs,
+        interval_seconds: intervalSeconds,
+        last_poll_at: pollAt,
+      });
+    } else {
+      await updateGlobal({
+        interval_seconds: intervalSeconds,
+        last_poll_at: pollAt,
+      });
+    }
+
+    await recordPostScrapeRun(stats);
+    await updateScrapeStatus({
+      active_proxy_index: endpoint.index,
+      last_post_finished_at: pollAt,
+      last_post_error: null,
     });
-  } else {
-    await updateGlobal({
-      interval_seconds: intervalSeconds,
-      last_poll_at: pollAt,
+
+    const durationMs = Date.now() - startedAt;
+    await logPostScrape({
+      success: true,
+      duration_ms: durationMs,
+      ...buildPostScrapeLogFields({
+        startedAt,
+        global,
+        stats,
+        ctx,
+        pages,
+        meta,
+        bounds,
+        newestTs,
+        intervalSeconds,
+        allNew,
+        mostlyExisting,
+        endpoint,
+        pollAt,
+      }),
     });
+
+    return {
+      stats,
+      intervalSeconds,
+      allNew,
+      mostlyExisting,
+      pages,
+      stopReason: ctx.stopReason,
+      endpoint,
+    };
+  } catch (err) {
+    const durationMs = Date.now() - startedAt;
+    const pollAt = new Date();
+    await logPostScrape({
+      success: false,
+      duration_ms: durationMs,
+      error: err.message,
+      status: err.response?.status ?? err.status ?? null,
+      pages,
+      posts_new: stats.new,
+      posts_existing: stats.existing,
+      posts_total: stats.total,
+      stop_reason: ctx.stopReason,
+      proxy_id: endpoint.id,
+      proxy: err.proxy ?? null,
+      watermark_before_utc: global.last_timestamp
+        ? toUtcDate(global.last_timestamp)?.toISOString()
+        : null,
+    });
+    throw err;
   }
-
-  await recordPostScrapeRun(stats);
-  await updateScrapeStatus({
-    active_proxy_index: endpoint.index,
-    last_post_finished_at: pollAt,
-    last_post_error: null,
-  });
-
-  return {
-    stats,
-    intervalSeconds,
-    allNew,
-    mostlyExisting,
-    pages,
-    stopReason: ctx.stopReason,
-    endpoint,
-  };
 }

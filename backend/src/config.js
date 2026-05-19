@@ -19,6 +19,7 @@ export const config = {
     process.env.SCRAPE_COMMENT_TIMING_LOG || './data/logs/comment-scrape-timing.log',
   scrapeCommentIntervalLog:
     process.env.SCRAPE_COMMENT_INTERVAL_LOG || './data/logs/comment-interval.log',
+  scrapePostLog: process.env.SCRAPE_POST_LOG || './data/logs/post-scrape.log',
   retentionDays: num(process.env.RETENTION_DAYS, 30),
   redditUserAgent: process.env.REDDIT_USER_AGENT || 'reddit-scraper/1.0 (research project)',
   intervalMinSeconds: num(process.env.INTERVAL_MIN_SECONDS, 60),

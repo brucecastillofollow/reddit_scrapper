@@ -99,6 +99,34 @@ export async function logCommentIntervalUpdate(entry) {
   });
 }
 
+export async function logPostScrape(entry) {
+  const durationMs = entry.duration_ms ?? 0;
+  const durationS = Number((durationMs / 1000).toFixed(3));
+  const record = {
+    duration_ms: durationMs,
+    duration_s: durationS,
+    success: entry.success ?? true,
+    ...entry,
+  };
+
+  let line;
+  if (record.success) {
+    line =
+      `[post-scrape] ${durationS}s` +
+      ` new=${record.posts_new ?? 0} existing=${record.posts_existing ?? 0}` +
+      ` pages=${record.pages ?? 0}` +
+      (record.stop_reason ? ` stop=${record.stop_reason}` : '') +
+      (record.downtime_sec != null ? ` downtime=${record.downtime_sec}s` : '') +
+      (record.backlog_span_sec != null ? ` backlog=${record.backlog_span_sec}s` : '') +
+      (record.pagination_exhausted ? ' pagination_end' : '') +
+      (record.hit_max_pages ? ' max_pages' : '');
+  } else {
+    line = `[post-scrape] ${durationS}s FAILED: ${record.error}`;
+  }
+
+  return appendJsonLog(config.scrapePostLog, 'post-scrape', record, { consoleLine: line });
+}
+
 export async function logCommentScrapeTiming(entry) {
   const durationMs = entry.duration_ms ?? 0;
   const summary = {
