@@ -55,8 +55,6 @@ async function processPostChild(child, stats, newestTs, ctx) {
     await updatePost(fields);
     stats.existing += 1;
     stats.total += 1;
-    ctx.stopped = true;
-    ctx.stopReason = 'existing';
     return latest;
   }
 
