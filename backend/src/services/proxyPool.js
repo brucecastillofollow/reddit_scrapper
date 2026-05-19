@@ -16,33 +16,77 @@ const requestCounts = new Map();
 /** @type {Map<string, number>} */
 const lastUsedAt = new Map();
 
-/** @type {Map<string, Promise<unknown>>} */
-const proxyQueues = new Map();
+/** Tail of per-proxy FIFO chain (next job starts when this promise settles). */
+const proxyTails = new Map();
+
+/** @type {Map<string, boolean>} */
+const proxyInFlight = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function enforceProxyCooldown(endpoint) {
-  const seconds = config.proxyCooldownSeconds;
-  if (seconds <= 0) return;
+function randomCooldownMs() {
+  const minSec = config.proxyCooldownMinSeconds;
+  const maxSec = Math.max(minSec, config.proxyCooldownMaxSeconds);
+  if (maxSec <= 0) return 0;
+  if (minSec <= 0) return 0;
+  if (maxSec === minSec) return minSec * 1000;
+  const seconds = minSec + Math.random() * (maxSec - minSec);
+  return Math.floor(seconds * 1000);
+}
+
+export async function enforceProxyCooldown(endpoint) {
+  const cooldownMs = randomCooldownMs();
+  if (cooldownMs <= 0) return;
 
   const id = endpoint?.id ?? 'unknown';
-  const minMs = seconds * 1000;
   const last = lastUsedAt.get(id) ?? 0;
-  const wait = minMs - (Date.now() - last);
+  const wait = cooldownMs - (Date.now() - last);
   if (wait > 0) await sleep(wait);
   lastUsedAt.set(id, Date.now());
 }
 
-/** Serialize work per proxy and enforce min interval between request starts. */
+/**
+ * Exactly one in-flight task per proxy ID (FIFO queue).
+ * Fixes races when multiple callers enqueue at the same time.
+ */
 export async function runOnProxy(endpoint, fn) {
   const id = endpoint?.id ?? 'unknown';
-  const prev = proxyQueues.get(id) ?? Promise.resolve();
-  const job = prev.catch(() => {}).then(async () => {
-    await enforceProxyCooldown(endpoint);
-    return fn();
+  const prev = proxyTails.get(id) ?? Promise.resolve();
+
+  let releaseTail;
+  const tail = new Promise((resolve) => {
+    releaseTail = resolve;
   });
-  proxyQueues.set(id, job);
-  return job;
+
+  const run = prev.finally(async () => {
+    proxyInFlight.set(id, true);
+    try {
+      return await fn();
+    } finally {
+      proxyInFlight.set(id, false);
+      releaseTail();
+    }
+  });
+
+  proxyTails.set(id, tail);
+  return run;
+}
+
+/** True while a task holds this proxy (scrape run or single fetch). */
+export function isProxyInFlight(endpoint) {
+  const id = endpoint?.id ?? 'unknown';
+  return proxyInFlight.get(id) === true;
+}
+
+/**
+ * Hold one proxy for a full scrape: all Reddit pages run sequentially on one client,
+ * with cooldown between requests — no other worker interleaves on this proxy.
+ */
+export async function runScrapeOnEndpoint(endpoint, fn) {
+  return runOnProxy(endpoint, async () => {
+    const client = createRedditClient(endpoint);
+    return fn(client);
+  });
 }
 
 function emptyCounts() {
@@ -104,7 +148,8 @@ export function rebuildPool() {
   index = 0;
   requestCounts.clear();
   lastUsedAt.clear();
-  proxyQueues.clear();
+  proxyTails.clear();
+  proxyInFlight.clear();
 }
 
 export function getPool() {
@@ -224,7 +269,11 @@ export async function checkEndpointHealth(endpoint) {
   return runOnProxy(endpoint, async () => {
     try {
       const client = createRedditClient(endpoint);
-      await client.get('https://www.reddit.com/new.json', { params: { limit: 1 } });
+      await enforceProxyCooldown(endpoint);
+      await client.get('https://www.reddit.com/new.json', {
+        params: { limit: 1 },
+        headers: redditRequestHeaders('https://www.reddit.com/new.json'),
+      });
       return true;
     } catch {
       return false;

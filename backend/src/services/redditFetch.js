@@ -1,5 +1,6 @@
 import {
   createRedditClient,
+  enforceProxyCooldown,
   getNextEndpoint,
   recordProxyRequest,
   redditRequestHeaders,
@@ -8,37 +9,46 @@ import {
 import { describeEndpoint, enrichError, logScrapeFailure } from './scrapeLogger.js';
 
 /**
- * Fetch Reddit JSON. Pass `endpoint` to keep pagination on one proxy (same session).
- * Omit `endpoint` only for ad-hoc single requests (picks next proxy via round-robin).
+ * Single Reddit GET using an existing client (inside runScrapeOnEndpoint).
+ * Enforces cooldown between paginated pages on the same proxy.
+ */
+export async function fetchRedditJsonWithClient(client, url, params, meta, endpoint) {
+  await enforceProxyCooldown(endpoint);
+
+  try {
+    const { data } = await client.get(url, {
+      params,
+      headers: redditRequestHeaders(url),
+    });
+    recordProxyRequest(endpoint, { success: true });
+    return { data, proxyIndex: endpoint.index, endpoint };
+  } catch (err) {
+    recordProxyRequest(endpoint, { success: false });
+    const proxyInfo = describeEndpoint(endpoint);
+    await logScrapeFailure({
+      kind: meta.kind || 'fetch',
+      target: meta.target || url,
+      subreddit: meta.subreddit ?? null,
+      url,
+      params,
+      proxy: proxyInfo,
+      error: err.message,
+      status: err.response?.status ?? null,
+    });
+    throw enrichError(err, endpoint);
+  }
+}
+
+/**
+ * Fetch Reddit JSON. Pass `endpoint` to pin a proxy; uses one queue slot per call.
+ * For multi-page scrapes prefer runScrapeOnEndpoint + fetchRedditJsonWithClient.
  */
 export async function fetchRedditJson(url, params = {}, meta = {}, endpoint = null) {
   const ep = endpoint ?? getNextEndpoint();
 
   return runOnProxy(ep, async () => {
     const client = createRedditClient(ep);
-
-    try {
-      const { data } = await client.get(url, {
-        params,
-        headers: redditRequestHeaders(url),
-      });
-      recordProxyRequest(ep, { success: true });
-      return { data, proxyIndex: ep.index, endpoint: ep };
-    } catch (err) {
-      recordProxyRequest(ep, { success: false });
-      const proxyInfo = describeEndpoint(ep);
-      await logScrapeFailure({
-        kind: meta.kind || 'fetch',
-        target: meta.target || url,
-        subreddit: meta.subreddit ?? null,
-        url,
-        params,
-        proxy: proxyInfo,
-        error: err.message,
-        status: err.response?.status ?? null,
-      });
-      throw enrichError(err, ep);
-    }
+    return fetchRedditJsonWithClient(client, url, params, meta, ep);
   });
 }
 

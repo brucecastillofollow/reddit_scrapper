@@ -40,11 +40,14 @@ export const config = {
   commentEfficiencyDays: num(process.env.COMMENT_EFFICIENCY_DAYS, 7),
   /** Exponential half-life (minutes) for weighting recent comment volume more heavily. */
   commentWeightHalfLifeMinutes: num(process.env.COMMENT_WEIGHT_HALF_LIFE_MINUTES, 360),
-  /** Min seconds between Reddit requests on the same proxy (429 avoidance). */
-  proxyCooldownSeconds: num(
-    process.env.PROXY_COOLDOWN_SECONDS || process.env.SCRAPE_SLEEP_SECONDS,
+  /** Random delay (seconds) between Reddit requests on the same proxy (429 avoidance). */
+  proxyCooldownMinSeconds: num(
+    process.env.PROXY_COOLDOWN_MIN_SECONDS ||
+      process.env.PROXY_COOLDOWN_SECONDS ||
+      process.env.SCRAPE_SLEEP_SECONDS,
     2,
   ),
+  proxyCooldownMaxSeconds: num(process.env.PROXY_COOLDOWN_MAX_SECONDS, 10),
   useDirect: bool(process.env.USE_DIRECT, true),
   dbResetOnStart: bool(process.env.DB_RESET_ON_START, false),
   proxyUrls: loadProxyUrls(),

@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
-import { fetchRedditJson } from './redditFetch.js';
+import { runScrapeOnEndpoint } from './proxyPool.js';
+import { fetchRedditJsonWithClient } from './redditFetch.js';
 import { logCommentScrapeTiming, logCommentIntervalUpdate } from './scrapeLogger.js';
 import { computeCommentInterval } from './commentInterval.js';
 import { getSubredditWeightedActivity } from './commentActivity.js';
@@ -160,7 +161,9 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
   let pages = 0;
 
   try {
-    let { data: listing } = await fetchRedditJson(
+    return await runScrapeOnEndpoint(endpoint, async (client) => {
+    let { data: listing } = await fetchRedditJsonWithClient(
+      client,
       commentsUrl(name),
       { limit: 100 },
       fetchMeta(name),
@@ -173,7 +176,8 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
 
     if (!neverScraped) {
       while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
-        ({ data: listing } = await fetchRedditJson(
+        ({ data: listing } = await fetchRedditJsonWithClient(
+          client,
           commentsUrl(name),
           { limit: 100, after: meta.after },
           fetchMeta(name),
@@ -257,6 +261,7 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       hot,
       stopReason: ctx.stopReason,
     };
+    });
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     // await logCommentScrapeTiming({
