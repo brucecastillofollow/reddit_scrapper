@@ -12,6 +12,8 @@ const bool = (v, fallback) => {
 
 export const config = {
   port: num(process.env.PORT, 3001),
+  /** Max JSON body size for bulk proxy upload etc. (default 10mb). */
+  bodyLimit: process.env.BODY_LIMIT || '10mb',
   databaseUrl: process.env.DATABASE_URL || 'postgresql://reddit:reddit@localhost:5432/reddit_scraper',
   archiveDir: process.env.ARCHIVE_DIR || './data/archives',
   scrapeFailureLog: process.env.SCRAPE_FAILURE_LOG || './data/logs/scrape-failures.log',
@@ -35,15 +37,16 @@ export const config = {
   maxPaginationPages: num(process.env.MAX_PAGINATION_PAGES, 20),
   commentLookbackDays: num(process.env.COMMENT_LOOKBACK_DAYS, 30),
   commentConcurrency: num(process.env.COMMENT_CONCURRENCY, 4),
+  /** Shared comment workers (not one per proxy — supports 500+ DB proxies). */
+  commentWorkerCount: num(process.env.COMMENT_WORKER_COUNT, 32),
   commentIdleSleepSeconds: num(process.env.COMMENT_IDLE_SLEEP_SECONDS, 10),
   commentCoordinatorIntervalSeconds: num(process.env.COMMENT_COORDINATOR_INTERVAL_SECONDS, 60),
   /** Subreddits enqueued per coordinator tick (20/min when interval is 60s). */
   commentScrapesPerMinute: num(process.env.COMMENT_SCRAPES_PER_MINUTE, 20),
   /** Prefer subs with new_posts greater than this (from post scraper). */
   commentHotNewPostsMin: num(process.env.COMMENT_HOT_NEW_POSTS_MIN, 10),
-  /** If none above hot min: take up to this many subs with new_posts above warm min. */
-  commentWarmNewPostsMin: num(process.env.COMMENT_WARM_NEW_POSTS_MIN, 5),
-  commentWarmNewPostsLimit: num(process.env.COMMENT_WARM_NEW_POSTS_LIMIT, 10),
+  /** Hot when new_posts * total_comment / total_posts exceeds this (total_posts > 0). */
+  commentHotActivityMin: num(process.env.COMMENT_HOT_ACTIVITY_MIN, 100),
   /** Target comments per scrape; interval ≈ seconds until this many comments appear. */
   commentTargetBatchSize: num(process.env.COMMENT_TARGET_BATCH_SIZE, 100),
   commentEfficiencyDays: num(process.env.COMMENT_EFFICIENCY_DAYS, 7),
@@ -64,8 +67,14 @@ export const config = {
     process.env.COMMENT_COORDINATOR_STARTUP_DELAY_SECONDS,
     30,
   ),
-  /** Consecutive 403s before proxy is quarantined from scraping. */
-  proxySkipAfterConsecutive403: num(process.env.PROXY_SKIP_AFTER_CONSECUTIVE_403, 5),
+  /** @deprecated One DB proxy per scrape; env used on any DB failure. */
+  proxyDbFailoverMax: num(process.env.PROXY_DB_FAILOVER_MAX, 1),
+  /** Consecutive proxy HTTP failures (403/502/503/407) before quarantine. */
+  proxySkipAfterConsecutive403: num(
+    process.env.PROXY_SKIP_AFTER_CONSECUTIVE_403 ||
+      process.env.PROXY_SKIP_AFTER_CONSECUTIVE_ERRORS,
+    3,
+  ),
   /** How long a quarantined proxy is skipped. */
   proxyQuarantineMinutes: num(process.env.PROXY_QUARANTINE_MINUTES, 30),
   /** Clear cookies only after this many 403s (unless recent success). */

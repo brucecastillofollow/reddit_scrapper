@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { pool, getGlobal, getScrapeStatus } from '../db.js';
 import { config } from '../config.js';
-import { getProxyCount, getPoolStats } from '../services/proxyPool.js';
+import { getProxyCount, getDbProxyCount, getPoolStats } from '../services/proxyPool.js';
+import { getProxySummary } from '../services/proxyRepository.js';
 import { isPostScrapeRunning, getCommentQueueStatus, triggerPostScrape } from '../workers/scrapeWorkers.js';
 import { buildEfficiencyReport } from '../services/scrapeEfficiency.js';
 import { getSubredditWeightedActivity } from '../services/commentActivity.js';
@@ -100,7 +101,16 @@ router.get('/status', async (_req, res, next) => {
       },
       active_proxy_index: status?.active_proxy_index ?? 0,
       proxies_configured: getProxyCount(),
-      proxy_stats: getPoolStats(),
+      proxies_db: getDbProxyCount(),
+      proxy_db_summary: await getProxySummary(),
+      proxy_stats: (() => {
+        const stats = getPoolStats();
+        return {
+          items: stats.slice(0, 50),
+          total: stats.length,
+          capped: stats.length > 50,
+        };
+      })(),
       use_direct: config.useDirect,
       post_scrape_interval_seconds: config.postScrapeIntervalSeconds,
       comment_max_tasks: config.commentScrapesPerMinute,

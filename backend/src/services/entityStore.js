@@ -94,106 +94,55 @@ export async function resetSubredditNewPosts(name) {
 }
 
 const SUBREDDIT_TASK_COLUMNS = `
-  name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts
+  name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts, total_comment
 `;
 
-async function fetchDueAndNever(client, { dueLimit, neverLimit, exclude }) {
-  let dueRows = [];
-  let neverRows = [];
-
-  if (dueLimit > 0) {
-    const dueParams = exclude.length > 0 ? [dueLimit, exclude] : [dueLimit];
-    const dueExclude = exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
-    ({ rows: dueRows } = await client.query(
-      `SELECT ${SUBREDDIT_TASK_COLUMNS}
-       FROM subreddit
-       WHERE last_poll_at IS NOT NULL
-         AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
-         ${dueExclude}
-       ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC, name
-       LIMIT $1`,
-      dueParams,
-    ));
-  }
-
-  if (neverLimit > 0) {
-    const neverParams = exclude.length > 0 ? [neverLimit, exclude] : [neverLimit];
-    const neverExclude = exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
-    ({ rows: neverRows } = await client.query(
-      `SELECT ${SUBREDDIT_TASK_COLUMNS}
-       FROM subreddit
-       WHERE last_poll_at IS NULL
-         ${neverExclude}
-       ORDER BY new_posts DESC, total_posts DESC, name
-       LIMIT $1`,
-      neverParams,
-    ));
-  }
-
-  return { dueRows, neverRows };
-}
-
-function fillRemainderDueNever(client, batchSize, priorityRows) {
-  const remainder = batchSize - priorityRows.length;
-  if (remainder <= 0) {
-    return { dueRows: [], neverRows: [] };
-  }
-  const dueLimit = Math.floor(remainder / 2);
-  const neverLimit = remainder - dueLimit;
-  return fetchDueAndNever(client, {
-    dueLimit,
-    neverLimit,
-    exclude: priorityRows.map((r) => r.name),
-  });
-}
-
-async function fetchWarmRows(client, { warmMin, hotMin, exclude, limit, hotBandOnly }) {
-  if (limit <= 0) return { rows: [], candidates: 0 };
-
-  const params = [warmMin];
-  let n = 2;
-  let bandClause = '';
-  if (hotBandOnly) {
-    bandClause = `AND new_posts <= $${n}`;
-    params.push(hotMin);
-    n += 1;
-  }
-  let excludeClause = '';
-  if (exclude.length > 0) {
-    excludeClause = `AND name <> ALL($${n}::varchar[])`;
-    params.push(exclude);
-    n += 1;
-  }
-  params.push(limit);
-  const limitParam = `$${n}`;
-
-  const { rows: candidates } = await client.query(
+async function fetchDueRows(client, { limit, exclude }) {
+  if (limit <= 0) return [];
+  const params = exclude.length > 0 ? [limit, exclude] : [limit];
+  const excludeClause = exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
+  const { rows } = await client.query(
     `SELECT ${SUBREDDIT_TASK_COLUMNS}
      FROM subreddit
-     WHERE new_posts > $1
-       ${bandClause}
+     WHERE last_poll_at IS NOT NULL
+       AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
        ${excludeClause}
-     ORDER BY new_posts DESC, name
-     LIMIT ${limitParam}
-     FOR UPDATE`,
+     ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC,
+              last_timestamp ASC NULLS FIRST,
+              name
+     LIMIT $1`,
     params,
   );
+  return rows;
+}
 
-  return { rows: candidates, candidates: candidates.length };
+async function fetchNeverRows(client, { limit, exclude }) {
+  if (limit <= 0) return [];
+  const params = exclude.length > 0 ? [limit, exclude] : [limit];
+  const excludeClause = exclude.length > 0 ? `AND name <> ALL($2::varchar[])` : '';
+  const { rows } = await client.query(
+    `SELECT ${SUBREDDIT_TASK_COLUMNS}
+     FROM subreddit
+     WHERE last_poll_at IS NULL
+       ${excludeClause}
+     ORDER BY name ASC
+     LIMIT $1`,
+    params,
+  );
+  return rows;
 }
 
 /**
- * Coordinator batch: up to batchSize subs per tick (default 20/min at 60s interval).
- * 1) All hot (new_posts > hotMin), capped at batchSize.
- * 2) Warm (new_posts in (warmMin, hotMin] when hot exists; else > warmMin), up to warmLimit.
- * 3) Remainder split: due (interval elapsed) + never scraped.
- * new_posts is reset to 0 only after a successful comment scrape (see commentScraper).
+ * Coordinator batch (up to batchSize per tick):
+ * 1) Hot: new_posts > hotMin OR new_posts * total_comment / total_posts > activityMin
+ * 2) Due: interval elapsed (last_poll_at + interval_seconds)
+ * 3) Never scraped (oldest name first)
+ * new_posts resets after successful comment scrape only.
  */
 export async function buildCommentCoordinatorTasks({
   batchSize = 20,
   hotNewPostsMin = 10,
-  warmNewPostsMin = 5,
-  warmNewPostsLimit = 10,
+  hotActivityMin = 100,
 } = {}) {
   const client = await pool.connect();
 
@@ -204,44 +153,39 @@ export async function buildCommentCoordinatorTasks({
       `SELECT ${SUBREDDIT_TASK_COLUMNS}
        FROM subreddit
        WHERE new_posts > $1
-       ORDER BY new_posts DESC, name
+          OR (
+            total_posts > 0
+            AND (new_posts::float * total_comment::float / total_posts::float) > $2
+          )
+       ORDER BY
+         GREATEST(
+           new_posts::float,
+           CASE
+             WHEN total_posts > 0 THEN new_posts::float * total_comment::float / total_posts::float
+             ELSE 0
+           END
+         ) DESC,
+         new_posts DESC,
+         name
        FOR UPDATE`,
-      [hotNewPostsMin],
+      [hotNewPostsMin, hotActivityMin],
     );
 
-    let hotRows = [];
-    let warmRows = [];
+    const hotRows =
+      hotCandidates.length > batchSize ? hotCandidates.slice(0, batchSize) : hotCandidates;
+
+    const exclude = hotRows.map((r) => r.name);
     let dueRows = [];
     let neverRows = [];
-    let warmCandidates = 0;
 
-    if (hotCandidates.length > batchSize) {
-      hotRows = hotCandidates.slice(0, batchSize);
-    } else {
-      hotRows = hotCandidates;
+    const afterHot = batchSize - hotRows.length;
+    if (afterHot > 0) {
+      dueRows = await fetchDueRows(client, { limit: afterHot, exclude });
+      exclude.push(...dueRows.map((r) => r.name));
 
-      const prioritySoFar = [...hotRows];
-      const warmSlots = Math.min(
-        warmNewPostsLimit,
-        Math.max(0, batchSize - prioritySoFar.length),
-      );
-
-      if (warmSlots > 0) {
-        const hotBandOnly = hotRows.length > 0;
-        const { rows, candidates } = await fetchWarmRows(client, {
-          warmMin: warmNewPostsMin,
-          hotMin: hotNewPostsMin,
-          exclude: prioritySoFar.map((r) => r.name),
-          limit: warmSlots,
-          hotBandOnly,
-        });
-        warmCandidates = candidates;
-        warmRows = rows;
-        prioritySoFar.push(...warmRows);
-      }
-
-      if (prioritySoFar.length < batchSize) {
-        ({ dueRows, neverRows } = await fillRemainderDueNever(client, batchSize, prioritySoFar));
+      const afterDue = batchSize - hotRows.length - dueRows.length;
+      if (afterDue > 0) {
+        neverRows = await fetchNeverRows(client, { limit: afterDue, exclude });
       }
     }
 
@@ -249,8 +193,7 @@ export async function buildCommentCoordinatorTasks({
 
     const seen = new Set();
     const tasks = [];
-
-    for (const row of [...hotRows, ...warmRows, ...dueRows, ...neverRows]) {
+    for (const row of [...hotRows, ...dueRows, ...neverRows]) {
       if (seen.has(row.name)) continue;
       seen.add(row.name);
       tasks.push(row);
@@ -260,11 +203,9 @@ export async function buildCommentCoordinatorTasks({
       tasks,
       counts: {
         hot: hotRows.length,
-        warm: warmRows.length,
         due: dueRows.length,
         never: neverRows.length,
         hot_candidates: hotCandidates.length,
-        warm_candidates: warmCandidates,
         batch_size: batchSize,
       },
     };

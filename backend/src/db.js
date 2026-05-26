@@ -43,11 +43,13 @@ CREATE INDEX IF NOT EXISTS ix_comments_subreddit_created ON comments (subreddit,
 CREATE TABLE IF NOT EXISTS global (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   last_timestamp TIMESTAMPTZ NOT NULL DEFAULT (NOW() - INTERVAL '1 hour'),
-  interval_seconds INTEGER NOT NULL DEFAULT 300,
+  interval_seconds INTEGER NOT NULL DEFAULT 30,
   last_poll_at TIMESTAMPTZ
 );
 
 INSERT INTO global (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE global ALTER COLUMN interval_seconds SET DEFAULT 30;
 
 CREATE TABLE IF NOT EXISTS global_ids (
   type VARCHAR(8) NOT NULL,
@@ -81,6 +83,23 @@ ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_comment_existing INTEGER
 ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS last_comment_total INTEGER DEFAULT 0;
 ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS session_posts_new BIGINT DEFAULT 0;
 ALTER TABLE scrape_status ADD COLUMN IF NOT EXISTS session_comments_new BIGINT DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS proxies (
+  id SERIAL PRIMARY KEY,
+  protocol VARCHAR(16) NOT NULL,
+  host VARCHAR(255) NOT NULL,
+  port INTEGER NOT NULL,
+  username VARCHAR(255) NOT NULL DEFAULT '',
+  password VARCHAR(255) NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  last_success_at TIMESTAMPTZ,
+  total_success_request_count BIGINT NOT NULL DEFAULT 0,
+  total_failed_request_count BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (protocol, host, port, username)
+);
+
+CREATE INDEX IF NOT EXISTS ix_proxies_enabled ON proxies (enabled) WHERE enabled = true;
 `;
 }
 

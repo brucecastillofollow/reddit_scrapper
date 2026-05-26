@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
 import { runScrapeOnEndpoint } from './proxyPool.js';
+import { runWithDbThenEnvFailover } from './proxyScrape.js';
 import { fetchRedditJsonWithClient } from './redditFetch.js';
 import { logCommentScrapeTiming, logCommentIntervalUpdate } from './scrapeLogger.js';
 import { computeCommentInterval } from './commentInterval.js';
@@ -150,7 +151,7 @@ async function resolveInterval(subreddit, stats, bounds, pollAt, lastTimestamp, 
   };
 }
 
-export async function runCommentScrapeForSubreddit(subRow, endpoint) {
+export async function runCommentScrapeForSubreddit(subRow) {
   const { name, last_timestamp, interval_seconds: currentInterval } = subRow;
   const neverScraped = isNeverScraped(subRow);
   const hot = isHotSubreddit(subRow);
@@ -162,7 +163,8 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
   let pages = 0;
 
   try {
-    return await runScrapeOnEndpoint(endpoint, async (client) => {
+    return await runWithDbThenEnvFailover((endpoint) =>
+      runScrapeOnEndpoint(endpoint, async (client) => {
     let { data: listing } = await fetchRedditJsonWithClient(
       client,
       commentsUrl(name),
@@ -263,7 +265,8 @@ export async function runCommentScrapeForSubreddit(subRow, endpoint) {
       hot,
       stopReason: ctx.stopReason,
     };
-    });
+      }),
+    );
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     // await logCommentScrapeTiming({

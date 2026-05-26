@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { getGlobal, updateGlobal, updateScrapeStatus, recordPostScrapeRun } from '../db.js';
-import { getNextEndpoint, getEndpointsForFailover, runScrapeOnEndpoint } from './proxyPool.js';
+import { runScrapeOnEndpoint } from './proxyPool.js';
+import { runWithDbThenEnvFailover } from './proxyScrape.js';
 import { fetchRedditJsonWithClient } from './redditFetch.js';
 import { toUtcDate, isAtOrBeforeUtc } from './scrapeBounds.js';
 import { logPostScrape } from './scrapeLogger.js';
@@ -239,25 +240,7 @@ async function runPostScrapeOnEndpoint(endpoint) {
   }
 }
 
-/** Try each proxy in order until one completes (session pinned per proxy for pagination). */
+/** DB proxies first; env fallbacks if all DB proxies fail (same session per proxy for pagination). */
 export async function runPostScrape() {
-  const firstEndpoint = getNextEndpoint();
-  const endpoints = getEndpointsForFailover(firstEndpoint);
-  let lastErr;
-
-  for (let i = 0; i < endpoints.length; i += 1) {
-    const endpoint = endpoints[i];
-    try {
-      return await runPostScrapeOnEndpoint(endpoint);
-    } catch (err) {
-      lastErr = err;
-      const hasNext = i < endpoints.length - 1;
-      console.warn(
-        `[post-scrape] ${endpoint.id} failed (${err.message})` +
-          (hasNext ? ` — retrying on ${endpoints[i + 1].id}` : ' — no proxies left'),
-      );
-    }
-  }
-
-  throw lastErr ?? new Error('Post scrape failed: no proxies configured');
+  return runWithDbThenEnvFailover((endpoint) => runPostScrapeOnEndpoint(endpoint));
 }
