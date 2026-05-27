@@ -7,14 +7,12 @@
     "start": "node src/index.js"
   },
   "dependencies": {
-    "archiver": "^7.0.1",
     "axios": "^1.7.9",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
-    "node-cron": "^3.0.3",
     "pg": "^8.13.1",
     "socks-proxy-agent": "^8.0.5",
     "tough-cookie": "^6.0.1"

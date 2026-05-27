@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 data/
+frontend/vite.config.js
 backend/data/
 *.log
 .DS_Store

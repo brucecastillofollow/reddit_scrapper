@@ -75,30 +75,6 @@ export async function logScrapeFailure(entry) {
   return appendJsonLog(config.scrapeFailureLog, 'scrape-fail', entry, { useConsoleError: true });
 }
 
-export async function logCommentIntervalUpdate(entry) {
-  const d = entry.interval_detail ?? {};
-  const before = entry.interval_before_sec ?? '—';
-  const after = entry.interval_after_sec ?? '—';
-  const clampNote = d.clamped
-    ? ` CLAMPED[${d.interval_min_sec},${d.interval_max_sec}] raw=${d.raw_interval_sec}`
-    : '';
-
-  const line =
-    `[comment-interval] r/${entry.subreddit}` +
-    ` ${before}s → ${after}s` +
-    ` | mode=${d.mode ?? '?'}` +
-    ` count=${d.scraped_count ?? 0}/${d.target_batch ?? 100}` +
-    ` span=${d.comment_span_sec ?? '?'}s wall=${d.wall_delta_sec ?? '?'}s` +
-    ` Δ100=${d.delta_for_100_sec ?? '?'}s` +
-    (d.weighted_rate_per_min != null ? ` rate=${d.weighted_rate_per_min}/min` : '') +
-    (d.formula ? ` | ${d.formula}` : '') +
-    clampNote;
-
-  return appendJsonLog(config.scrapeCommentIntervalLog, 'comment-interval', entry, {
-    consoleLine: line,
-  });
-}
-
 export async function logPostScrape(entry) {
   const durationMs = entry.duration_ms ?? 0;
   const durationS = Number((durationMs / 1000).toFixed(3));
@@ -125,25 +101,6 @@ export async function logPostScrape(entry) {
   }
 
   return appendJsonLog(config.scrapePostLog, 'post-scrape', record, { consoleLine: line });
-}
-
-export async function logCommentScrapeTiming(entry) {
-  const durationMs = entry.duration_ms ?? 0;
-  const summary = {
-    subreddit: entry.subreddit,
-    duration_ms: durationMs,
-    duration_s: Number((durationMs / 1000).toFixed(3)),
-    success: entry.success ?? true,
-    ...entry,
-  };
-  // console.log(
-  //   `[comment-timing] r/${summary.subreddit} ${summary.duration_s}s` +
-  //     (summary.success
-  //       ? ` new=${summary.comments_new ?? 0} existing=${summary.comments_existing ?? 0} pages=${summary.pages ?? 1}` +
-  //           (summary.stop_reason ? ` stop=${summary.stop_reason}` : '')
-  //       : ` FAILED: ${summary.error}`),
-  // );
-  return appendJsonLog(config.scrapeCommentTimingLog, 'comment-timing', summary);
 }
 
 export async function logScrapeFailureFromError(kind, err, extra = {}) {

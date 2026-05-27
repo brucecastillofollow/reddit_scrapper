@@ -8,7 +8,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'https://reddit.weienwong.online/api',
+        target: 'http://localhost:3001',
         changeOrigin: true,
       },
     },

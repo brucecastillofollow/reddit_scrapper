@@ -3,7 +3,6 @@ import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
 import { runScrapeOnEndpoint } from './proxyPool.js';
 import { runWithDbThenEnvFailover } from './proxyScrape.js';
 import { fetchRedditJsonWithClient } from './redditFetch.js';
-import { logCommentScrapeTiming, logCommentIntervalUpdate } from './scrapeLogger.js';
 import { computeCommentInterval } from './commentInterval.js';
 import { getSubredditWeightedActivity } from './commentActivity.js';
 import { toUtcDate, isAtOrBeforeUtc, utcNow } from './scrapeBounds.js';
@@ -193,19 +192,15 @@ export async function runCommentScrapeForSubreddit(subRow) {
     }
 
     const pollAt = utcNow();
-    const { intervalSeconds, intervalDetail, commentSpanSec, wallDeltaSec, weightedRatePerMin } =
-      await resolveInterval(name, stats, bounds, pollAt, last_timestamp, currentInterval);
+    const { intervalSeconds } = await resolveInterval(
+      name,
+      stats,
+      bounds,
+      pollAt,
+      last_timestamp,
+      currentInterval,
+    );
     const resolvedTimestamp = bounds.newestTs || pollAt;
-
-    // await logCommentIntervalUpdate({
-    //   subreddit: name,
-    //   hot,
-    //   never_scraped: neverScraped,
-    //   stop_reason: ctx.stopReason,
-    //   interval_before_sec: currentInterval,
-    //   interval_after_sec: intervalSeconds,
-    //   interval_detail: intervalDetail,
-    // });
 
     if (stats.total > 0) {
       await recordSubredditCommentScrape(name, {
@@ -224,28 +219,6 @@ export async function runCommentScrapeForSubreddit(subRow) {
     await resetSubredditNewPosts(name);
 
     const durationMs = Date.now() - startedAt;
-    // await logCommentScrapeTiming({
-    //   subreddit: name,
-    //   duration_ms: durationMs,
-    //   success: true,
-    //   never_scraped: neverScraped,
-    //   hot,
-    //   comments_new: stats.new,
-    //   comments_existing: stats.existing,
-    //   comments_total: stats.total,
-    //   reddit_dist: meta.reddit_dist,
-    //   pages,
-    //   stop_reason: ctx.stopReason,
-    //   interval_seconds: intervalSeconds,
-    //   interval_before_sec: currentInterval,
-    //   comment_span_sec: commentSpanSec,
-    //   wall_delta_sec: wallDeltaSec,
-    //   interval_detail: intervalDetail,
-    //   weighted_rate_per_min: weightedRatePerMin,
-    //   oldest_comment_utc: bounds.oldestTs?.toISOString() ?? null,
-    //   proxy_id: endpoint.id,
-    //   proxy_index: endpoint.index,
-    // });
 
     await recordCommentScrapeRun(name, stats);
     await updateScrapeStatus({
@@ -268,18 +241,6 @@ export async function runCommentScrapeForSubreddit(subRow) {
       }),
     );
   } catch (err) {
-    const durationMs = Date.now() - startedAt;
-    // await logCommentScrapeTiming({
-    //   subreddit: name,
-    //   duration_ms: durationMs,
-    //   success: false,
-    //   never_scraped: neverScraped,
-    //   hot,
-    //   error: err.message,
-    //   pages,
-    //   proxy_id: endpoint.id,
-    //   proxy: err.proxy ?? null,
-    // });
     throw err;
   }
 }

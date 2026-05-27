@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import EfficiencyPanel from './EfficiencyPanel.jsx';
 import OverviewTab from './tabs/OverviewTab.jsx';
-import ProxiesTab from './tabs/ProxiesTab.jsx';
+import ManageProxiesTab from './tabs/ManageProxiesTab.jsx';
 import CommentsTab from './tabs/CommentsTab.jsx';
 import PostsTab from './tabs/PostsTab.jsx';
 
@@ -9,7 +9,7 @@ const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'posts', label: 'Posts' },
   { id: 'comments', label: 'Comments' },
-  { id: 'proxies', label: 'Proxies' },
+  { id: 'proxies', label: 'Manage proxies' },
   { id: 'efficiency', label: 'Efficiency' },
 ];
 
@@ -91,7 +91,7 @@ export default function App() {
           <PostsTab retentionDays={status?.retention_days} scraping={running} />
         )}
         {tab === 'comments' && <CommentsTab status={status} />}
-        {tab === 'proxies' && <ProxiesTab status={status} />}
+        {tab === 'proxies' && <ManageProxiesTab status={status} />}
         {tab === 'efficiency' && <EfficiencyPanel />}
       </div>
     </>
