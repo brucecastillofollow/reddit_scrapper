@@ -9,7 +9,7 @@ import {
  */
 export async function runWithDbThenEnvFailover(runOnEndpoint) {
   let lastErr;
-  const dbEndpoint = getNextDbEndpoint();
+  const dbEndpoint = await getNextDbEndpoint();
 
   if (dbEndpoint) {
     try {

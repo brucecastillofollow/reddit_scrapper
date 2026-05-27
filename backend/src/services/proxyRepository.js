@@ -6,7 +6,52 @@ export function isSupportedProtocol(protocol) {
   return SUPPORTED_PROTOCOLS.has(String(protocol || '').toLowerCase());
 }
 
-/** Parse lines: host:port or host:port:user or host:port:user:pass */
+function parseQuotedProxyLine(line) {
+  const quoted = line.match(/^"([^"]+)"\s*:\s*"([^"]*)"\s*@\s*"([^"]+)"\s*:\s*"([^"]+)"$/);
+  if (!quoted) return null;
+
+  const [, username, password, host, portRaw] = quoted;
+  const port = Number(portRaw);
+
+  if (!host) return { error: 'Missing host' };
+  if (!Number.isFinite(port) || port < 1 || port > 65535) return { error: 'Invalid port' };
+
+  return { host, port, username: username || '', password: password || '' };
+}
+
+/** username:password@ip:port (password may contain colons or @) */
+function parseAtProxyLine(line) {
+  if (!line.includes('@') || line.startsWith('"')) return null;
+
+  const atIdx = line.lastIndexOf('@');
+  const auth = line.slice(0, atIdx);
+  const hostPort = line.slice(atIdx + 1);
+
+  const colonIdx = hostPort.lastIndexOf(':');
+  if (colonIdx <= 0) return { error: 'Invalid host:port after @' };
+
+  const host = hostPort.slice(0, colonIdx).trim();
+  const port = Number(hostPort.slice(colonIdx + 1).trim());
+
+  const userColon = auth.indexOf(':');
+  if (userColon < 0) return { error: 'Expected username:password before @' };
+
+  const username = auth.slice(0, userColon).trim();
+  const password = auth.slice(userColon + 1);
+
+  if (!host) return { error: 'Missing host' };
+  if (!Number.isFinite(port) || port < 1 || port > 65535) return { error: 'Invalid port' };
+
+  return { host, port, username: username || '', password: password || '' };
+}
+
+/** Parse lines:
+ * - host:port
+ * - host:port:username
+ * - host:port:username:password
+ * - username:password@ip:port
+ * - "username":"password"@"ip":"port"
+ */
 export function parseProxyLines(text) {
   const lines = String(text || '')
     .split(/\r?\n/)
@@ -18,9 +63,33 @@ export function parseProxyLines(text) {
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
+    const quoted = parseQuotedProxyLine(line);
+    if (quoted) {
+      if (quoted.error) {
+        errors.push({ line: i + 1, message: quoted.error });
+      } else {
+        parsed.push(quoted);
+      }
+      continue;
+    }
+
+    const atFormat = parseAtProxyLine(line);
+    if (atFormat) {
+      if (atFormat.error) {
+        errors.push({ line: i + 1, message: atFormat.error });
+      } else {
+        parsed.push(atFormat);
+      }
+      continue;
+    }
+
     const parts = line.split(':');
     if (parts.length < 2) {
-      errors.push({ line: i + 1, message: 'Expected host:port[:username[:password]]' });
+      errors.push({
+        line: i + 1,
+        message:
+          'Expected host:port, username:password@ip:port, or "username":"password"@"ip":"port"',
+      });
       continue;
     }
 
@@ -77,7 +146,7 @@ export async function listProxies({ page = 1, limit = 50, search = '', enabledOn
   const listSql = `
     SELECT id, protocol, host, port, username,
            CASE WHEN password <> '' THEN true ELSE false END AS has_password,
-           enabled, last_success_at,
+           enabled, last_success_at, last_used_at,
            total_success_request_count, total_failed_request_count, created_at
     FROM proxies
     WHERE ${where}
@@ -106,12 +175,12 @@ export async function listProxies({ page = 1, limit = 50, search = '', enabledOn
 export async function listEnabledProxiesForPool() {
   const { rows } = await pool.query(
     `SELECT id, protocol, host, port, username, password,
-            last_success_at, total_success_request_count, total_failed_request_count
+            last_success_at, last_used_at,
+            total_success_request_count, total_failed_request_count
      FROM proxies
      WHERE enabled = true
      ORDER BY total_failed_request_count ASC,
-              (CASE WHEN total_success_request_count = 0 AND total_failed_request_count = 0 THEN 0 ELSE 1 END),
-              last_success_at ASC NULLS FIRST,
+              last_used_at ASC NULLS FIRST,
               id ASC`,
   );
   return rows;
@@ -169,8 +238,15 @@ export async function deleteProxiesBulk(ids) {
   return rowCount;
 }
 
-export async function recordProxyRequestResult(proxyDbId, success) {
+export async function recordProxyUsed(proxyDbId) {
   if (!proxyDbId) return;
+  await pool.query(`UPDATE proxies SET last_used_at = NOW() WHERE id = $1`, [proxyDbId]);
+}
+
+/** @param {{ success: boolean, proxyFault?: boolean }} result */
+export async function recordProxyRequestResult(proxyDbId, result) {
+  if (!proxyDbId) return;
+  const { success, proxyFault = false } = result;
   if (success) {
     await pool.query(
       `UPDATE proxies SET
@@ -179,7 +255,7 @@ export async function recordProxyRequestResult(proxyDbId, success) {
        WHERE id = $1`,
       [proxyDbId],
     );
-  } else {
+  } else if (proxyFault) {
     await pool.query(
       `UPDATE proxies SET total_failed_request_count = total_failed_request_count + 1 WHERE id = $1`,
       [proxyDbId],

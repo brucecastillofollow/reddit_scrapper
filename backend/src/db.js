@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS proxies (
 );
 
 CREATE INDEX IF NOT EXISTS ix_proxies_enabled ON proxies (enabled) WHERE enabled = true;
+
+ALTER TABLE proxies ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
 `;
 }
 

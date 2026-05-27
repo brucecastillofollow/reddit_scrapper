@@ -4,6 +4,7 @@ import {
   enforceProxyCooldown,
   getNextEndpoint,
   invalidateRedditSession,
+  isProxyInfrastructureError,
   recordProxyRequest,
   redditRequestHeaders,
   runOnProxy,
@@ -29,9 +30,9 @@ export async function fetchRedditJsonWithClient(client, url, params, meta, endpo
     schedulePersistCookieJar(endpoint);
     return { data, proxyIndex: endpoint.index, endpoint };
   } catch (err) {
-    recordProxyRequest(endpoint, { success: false });
+    recordProxyRequest(endpoint, { success: false, err });
     const status = err.response?.status ?? null;
-    if (recordProxyHttpError(endpoint, status)) {
+    if (isProxyInfrastructureError(err) && recordProxyHttpError(endpoint, status)) {
       await invalidateRedditSession(endpoint);
     }
     const proxyInfo = describeEndpoint(endpoint);

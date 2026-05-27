@@ -8,6 +8,7 @@ import {
   buildProxyUrl,
   listEnabledProxiesForPool,
   recordProxyRequestResult,
+  recordProxyUsed,
 } from './proxyRepository.js';
 import {
   clearAllCookieJars,
@@ -17,6 +18,10 @@ import {
   persistCookieJar,
   schedulePersistCookieJar,
 } from './proxyCookieJar.js';
+import {
+  acquireRedditCookieAccount,
+  applyRedditCookiesToJar,
+} from './redditCookiePool.js';
 import {
   clearAllProxyHealth,
   getProxyHealthSnapshot,
@@ -66,6 +71,7 @@ function rowToEndpoint(row, idx) {
     index: idx,
     dbStats: {
       last_success_at: row.last_success_at,
+      last_used_at: row.last_used_at,
       total_success_request_count: Number(row.total_success_request_count ?? 0),
       total_failed_request_count: Number(row.total_failed_request_count ?? 0),
     },
@@ -132,19 +138,48 @@ export function rebuildPool() {
   clearAllProxyHealth();
 }
 
-export function isProxyRequestError(err) {
+/** Reddit HTTP responses — not counted as proxy failures. */
+export function isRedditHttpError(err) {
+  const status = err?.response?.status ?? err?.status ?? null;
+  return status === 403 || status === 404 || status === 401 || status === 429;
+}
+
+/** Proxy/connectivity failure (counts toward proxy failed_request_count). */
+export function isProxyInfrastructureError(err) {
   if (!err) return false;
+  if (isRedditHttpError(err)) return false;
+
   const status = err.response?.status ?? err.status ?? null;
-  if (status === 403 || status === 407 || status === 502 || status === 503) return true;
   const code = err.code ?? '';
   const msg = String(err.message || '').toLowerCase();
-  return (
-    ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EPROTO'].includes(code) ||
-    msg.includes('proxy') ||
-    msg.includes('tunnel') ||
-    msg.includes('socket') ||
-    msg.includes('timeout')
-  );
+
+  if (status === 407) return true;
+
+  if (
+    msg.includes('socks') ||
+    msg.includes('proxy rejected') ||
+    msg.includes('notallowed') ||
+    (msg.includes('proxy') && (msg.includes('rejected') || msg.includes('tunnel')))
+  ) {
+    return true;
+  }
+
+  if (
+    ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EPROTO'].includes(code)
+  ) {
+    return true;
+  }
+
+  if (!status && !err.response) {
+    if (msg.includes('proxy') || msg.includes('tunnel') || msg.includes('socks')) return true;
+    if (code) return true;
+  }
+
+  return false;
+}
+
+export function isProxyRequestError(err) {
+  return isProxyInfrastructureError(err) || isRedditHttpError(err);
 }
 
 export async function enforceProxyCooldown(endpoint) {
@@ -197,6 +232,12 @@ export function isProxyInFlight(endpoint) {
 
 export async function runScrapeOnEndpoint(endpoint, fn) {
   return runOnProxy(endpoint, async () => {
+    const jar = await getCookieJar(endpoint);
+    const redditAccount = acquireRedditCookieAccount();
+    if (redditAccount) {
+      await applyRedditCookiesToJar(jar, redditAccount);
+    }
+
     const client = await createRedditClient(endpoint);
     await ensureRedditSession(client, endpoint);
     try {
@@ -211,12 +252,13 @@ function emptyCounts() {
   return { total: 0, success: 0, failed: 0 };
 }
 
-export function recordProxyRequest(endpoint, { success }) {
+export function recordProxyRequest(endpoint, { success, err = null }) {
   const id = endpoint?.id ?? 'unknown';
+  const proxyFault = !success && isProxyInfrastructureError(err);
   const counts = requestCounts.get(id) ?? emptyCounts();
   counts.total += 1;
   if (success) counts.success += 1;
-  else counts.failed += 1;
+  else if (proxyFault) counts.failed += 1;
   requestCounts.set(id, counts);
 
   if (endpoint?.source === 'db' && endpoint.proxyDbId) {
@@ -224,11 +266,11 @@ export function recordProxyRequest(endpoint, { success }) {
       if (success) {
         endpoint.dbStats.total_success_request_count += 1;
         endpoint.dbStats.last_success_at = new Date();
-      } else {
+      } else if (proxyFault) {
         endpoint.dbStats.total_failed_request_count += 1;
       }
     }
-    recordProxyRequestResult(endpoint.proxyDbId, success).catch(() => {});
+    recordProxyRequestResult(endpoint.proxyDbId, { success, proxyFault }).catch(() => {});
   }
 }
 
@@ -236,15 +278,9 @@ function failureCount(endpoint) {
   return endpoint?.dbStats?.total_failed_request_count ?? 0;
 }
 
-/** No requests recorded in DB yet. */
-function isNeverUsed(endpoint) {
-  const s = endpoint?.dbStats;
-  return (s?.total_success_request_count ?? 0) === 0 && (s?.total_failed_request_count ?? 0) === 0;
-}
-
-/** Older last_success_at first; null = never succeeded (oldest). */
-function lastSuccessTime(endpoint) {
-  const at = endpoint?.dbStats?.last_success_at;
+/** Older last_used_at first; null = never used (preferred). */
+function lastUsedTime(endpoint) {
+  const at = endpoint?.dbStats?.last_used_at;
   if (!at) return 0;
   return new Date(at).getTime();
 }
@@ -253,17 +289,13 @@ function compareDbEndpoints(a, b) {
   const failDiff = failureCount(a) - failureCount(b);
   if (failDiff !== 0) return failDiff;
 
-  const neverA = isNeverUsed(a);
-  const neverB = isNeverUsed(b);
-  if (neverA !== neverB) return neverA ? -1 : 1;
-
-  const timeDiff = lastSuccessTime(a) - lastSuccessTime(b);
+  const timeDiff = lastUsedTime(a) - lastUsedTime(b);
   if (timeDiff !== 0) return timeDiff;
 
   return (a.proxyDbId ?? 0) - (b.proxyDbId ?? 0);
 }
 
-/** Lowest failures → never used → oldest last_success_at. */
+/** Lowest failed count → oldest last_used_at. */
 function sortedDbEndpoints() {
   return [...dbPool].sort(compareDbEndpoints);
 }
@@ -274,9 +306,8 @@ function pickFromSortedDbList(list) {
   const sorted = (healthy.length > 0 ? healthy : list).sort(compareDbEndpoints);
   const minFail = failureCount(sorted[0]);
   const tier = sorted.filter((ep) => failureCount(ep) === minFail);
-
-  const neverUsed = tier.filter(isNeverUsed);
-  const pickPool = neverUsed.length > 0 ? neverUsed : tier;
+  const minUsed = Math.min(...tier.map(lastUsedTime));
+  const pickPool = tier.filter((ep) => lastUsedTime(ep) === minUsed);
 
   const endpoint = pickPool[index % pickPool.length];
   index = (index + 1) % Math.max(pickPool.length, 1);
@@ -342,6 +373,7 @@ export function getPoolStats() {
       requests_success: counts.success,
       requests_failed: counts.failed,
       last_success_at: db?.last_success_at ?? null,
+      last_used_at: db?.last_used_at ?? null,
       total_success_request_count: db?.total_success_request_count ?? null,
       total_failed_request_count: db?.total_failed_request_count ?? null,
       quarantined: health?.quarantined ?? false,
@@ -413,13 +445,19 @@ export function getNextEndpoint({ source } = {}) {
   return endpoint;
 }
 
-/** Prefer DB proxies; returns null only when db pool empty. */
-export function getNextDbEndpoint() {
-  return getNextEndpoint({ source: 'db' });
+/** Prefer DB proxies; returns null only when db pool empty. Updates last_used_at. */
+export async function getNextDbEndpoint() {
+  const endpoint = getNextEndpoint({ source: 'db' });
+  if (endpoint?.proxyDbId) {
+    const now = new Date();
+    endpoint.dbStats.last_used_at = now;
+    await recordProxyUsed(endpoint.proxyDbId);
+  }
+  return endpoint;
 }
 
-export function acquireScrapeEndpoint() {
-  return getNextDbEndpoint() ?? getNextEndpoint({ source: 'env' });
+export async function acquireScrapeEndpoint() {
+  return (await getNextDbEndpoint()) ?? getNextEndpoint({ source: 'env' });
 }
 
 export function getNextProxy() {
@@ -555,8 +593,8 @@ export async function checkEndpointHealth(endpoint) {
       schedulePersistCookieJar(endpoint);
       recordProxyRequest(endpoint, { success: true });
       return true;
-    } catch {
-      recordProxyRequest(endpoint, { success: false });
+    } catch (err) {
+      recordProxyRequest(endpoint, { success: false, err });
       return false;
     }
   });

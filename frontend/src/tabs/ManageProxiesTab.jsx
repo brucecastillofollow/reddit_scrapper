@@ -145,8 +145,9 @@ export default function ManageProxiesTab({ status }) {
       <section className="card proxy-add-card">
         <h2 className="section-title">Add proxies</h2>
         <p className="card-meta section-intro">
-          One proxy per line: <code>host:port</code> or <code>host:port:username:password</code>.
-          All lines use the selected protocol.
+          One proxy per line: <code>host:port</code>, <code>username:password@ip:port</code>,{' '}
+          <code>host:port:username:password</code>, or{' '}
+          <code>"username":"password"@"ip":"port"</code>. All lines use the selected protocol.
         </p>
 
         <form onSubmit={onBulkAdd} className="proxy-add-form">
@@ -165,7 +166,9 @@ export default function ManageProxiesTab({ status }) {
             Proxy list
             <textarea
               rows={8}
-              placeholder={'192.168.1.1:1080\nproxy.example.com:8080:user:pass'}
+              placeholder={
+                '192.168.1.1:1080\nuser:pass@192.168.1.10:8080\nproxy.example.com:8080:user:pass'
+              }
               value={lines}
               onChange={(e) => setLines(e.target.value)}
             />
@@ -223,6 +226,7 @@ export default function ManageProxiesTab({ status }) {
                     <th>Host</th>
                     <th>Port</th>
                     <th>User</th>
+                    <th>Last used</th>
                     <th>Last success</th>
                     <th>Success</th>
                     <th>Failed</th>
@@ -238,6 +242,7 @@ export default function ManageProxiesTab({ status }) {
                       <td className="title-cell">{p.host}</td>
                       <td>{p.port}</td>
                       <td>{p.username || '—'}</td>
+                      <td>{formatDate(p.last_used_at)}</td>
                       <td>{formatDate(p.last_success_at)}</td>
                       <td className="stat-success">
                         {formatCount(p.total_success_request_count)}
