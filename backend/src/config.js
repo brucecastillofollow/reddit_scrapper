@@ -76,6 +76,8 @@ export const config = {
 
   proxyCooldownMaxSeconds: num(process.env.PROXY_COOLDOWN_MAX_SECONDS, 10),
 
+  proxyDefaultIntervalSeconds: num(process.env.PROXY_DEFAULT_INTERVAL_SECONDS, 10),
+
   workerStartupStaggerSeconds: num(process.env.WORKER_STARTUP_STAGGER_SECONDS, 5),
 
   commentCoordinatorStartupDelaySeconds: num(

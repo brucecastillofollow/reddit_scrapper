@@ -73,6 +73,7 @@ function rowToEndpoint(row, idx) {
     dbStats: {
       last_success_at: row.last_success_at,
       last_used_at: row.last_used_at,
+      interval_seconds: Number(row.interval_seconds ?? config.proxyDefaultIntervalSeconds),
       total_success_request_count: Number(row.total_success_request_count ?? 0),
       total_failed_request_count: Number(row.total_failed_request_count ?? 0),
     },
@@ -139,15 +140,21 @@ export function rebuildPool() {
   clearAllProxyHealth();
 }
 
-/** Reddit HTTP responses — not counted as proxy failures. */
+/** Reddit rejection (403/404/401) — not counted as proxy failures. */
 export function isRedditHttpError(err) {
   const status = err?.response?.status ?? err?.status ?? null;
-  return status === 403 || status === 404 || status === 401 || status === 429;
+  return status === 403 || status === 404 || status === 401;
 }
 
-/** Proxy/connectivity failure (counts toward proxy failed_request_count). */
+export function isRedditRateLimitError(err) {
+  const status = err?.response?.status ?? err?.status ?? null;
+  return status === 429;
+}
+
+/** Proxy/connectivity failure or rate limit (counts toward proxy failed_request_count). */
 export function isProxyInfrastructureError(err) {
   if (!err) return false;
+  if (isRedditRateLimitError(err)) return true;
   if (isRedditHttpError(err)) return false;
 
   const status = err.response?.status ?? err.status ?? null;
@@ -180,7 +187,7 @@ export function isProxyInfrastructureError(err) {
 }
 
 export function isProxyRequestError(err) {
-  return isProxyInfrastructureError(err) || isRedditHttpError(err);
+  return isProxyInfrastructureError(err) || isRedditHttpError(err) || isRedditRateLimitError(err);
 }
 
 export async function enforceProxyCooldown(endpoint) {
@@ -256,11 +263,16 @@ export async function runScrapeOnEndpointWithCookieRetry(endpoint, fn) {
   try {
     return await runScrapeOnEndpoint(endpoint, fn);
   } catch (err) {
-    if (!isRedditHttpError(err) || getRedditCookieAccountCount() === 0) throw err;
+    if (
+      (!isRedditHttpError(err) && !isRedditRateLimitError(err)) ||
+      getRedditCookieAccountCount() === 0
+    ) {
+      throw err;
+    }
 
     const status = err.response?.status ?? err.status ?? '?';
     console.warn(
-      `[scrape] ${endpoint.id} reddit rejection (${status}) — retry once with next cookie`,
+      `[scrape] ${endpoint.id} reddit ${status === 429 ? 'rate limit' : 'rejection'} (${status}) — retry once with next cookie`,
     );
     return runScrapeOnEndpoint(endpoint, fn, { clearJarFirst: true });
   }
@@ -296,6 +308,29 @@ function failureCount(endpoint) {
   return endpoint?.dbStats?.total_failed_request_count ?? 0;
 }
 
+function proxyIntervalSeconds(endpoint) {
+  const n = endpoint?.dbStats?.interval_seconds;
+  return Number.isFinite(n) && n >= 0 ? n : config.proxyDefaultIntervalSeconds;
+}
+
+/** When this proxy becomes eligible again (ms since epoch). Never used → 0. */
+function proxyNextDueMs(endpoint) {
+  const used = endpoint?.dbStats?.last_used_at;
+  if (!used) return 0;
+  return new Date(used).getTime() + proxyIntervalSeconds(endpoint) * 1000;
+}
+
+function isProxyIntervalDue(endpoint) {
+  if (!endpoint?.dbStats?.last_used_at) return true;
+  return Date.now() >= proxyNextDueMs(endpoint);
+}
+
+/** Enabled DB proxy that is past interval and not quarantined. */
+function getEligibleDbEndpoints() {
+  if (!dbPool.length) return [];
+  return dbPool.filter((ep) => isProxyIntervalDue(ep) && !isProxyQuarantined(ep));
+}
+
 /** Older last_used_at first; null = never used (preferred). */
 function lastUsedTime(endpoint) {
   const at = endpoint?.dbStats?.last_used_at;
@@ -313,9 +348,13 @@ function compareDbEndpoints(a, b) {
   return (a.proxyDbId ?? 0) - (b.proxyDbId ?? 0);
 }
 
-/** Lowest failed count → oldest last_used_at. */
+/** Lowest failed count → oldest last_used_at (eligible DB proxies only). */
 function sortedDbEndpoints() {
-  return [...dbPool].sort(compareDbEndpoints);
+  return getEligibleDbEndpoints().sort(compareDbEndpoints);
+}
+
+export function getEligibleDbProxyCount() {
+  return getEligibleDbEndpoints().length;
 }
 
 function pickFromSortedDbList(list) {
@@ -392,6 +431,12 @@ export function getPoolStats() {
       requests_failed: counts.failed,
       last_success_at: db?.last_success_at ?? null,
       last_used_at: db?.last_used_at ?? null,
+      interval_seconds: db?.interval_seconds ?? null,
+      next_due_at:
+        ep.source === 'db' && db?.last_used_at
+          ? new Date(proxyNextDueMs(ep)).toISOString()
+          : null,
+      interval_due: ep.source === 'db' ? isProxyIntervalDue(ep) : true,
       total_success_request_count: db?.total_success_request_count ?? null,
       total_failed_request_count: db?.total_failed_request_count ?? null,
       quarantined: health?.quarantined ?? false,
@@ -410,10 +455,7 @@ function filterPool({ source } = {}) {
 export function getEndpointsForFailover(_firstEndpoint = null, { source } = {}) {
   if (source === 'db') {
     const sorted = sortedDbEndpoints();
-    if (!sorted.length) return [];
-    const healthy = sorted.filter((ep) => !isProxyQuarantined(ep));
-    const quarantined = sorted.filter((ep) => isProxyQuarantined(ep));
-    return healthy.length > 0 ? healthy : quarantined;
+    return sorted;
   }
 
   const list = filterPool({ source });

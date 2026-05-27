@@ -96,12 +96,14 @@ CREATE TABLE IF NOT EXISTS proxies (
   total_success_request_count BIGINT NOT NULL DEFAULT 0,
   total_failed_request_count BIGINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  interval_seconds INTEGER NOT NULL DEFAULT 10,
   UNIQUE (protocol, host, port, username)
 );
 
 CREATE INDEX IF NOT EXISTS ix_proxies_enabled ON proxies (enabled) WHERE enabled = true;
 
 ALTER TABLE proxies ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+ALTER TABLE proxies ADD COLUMN IF NOT EXISTS interval_seconds INTEGER NOT NULL DEFAULT 10;
 `;
 }
 

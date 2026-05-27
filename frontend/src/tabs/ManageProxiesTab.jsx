@@ -100,6 +100,22 @@ export default function ManageProxiesTab({ status }) {
     }
   };
 
+  const updateInterval = async (id, intervalSeconds) => {
+    const sec = Math.max(0, parseInt(intervalSeconds, 10));
+    if (!Number.isFinite(sec)) return;
+    try {
+      const res = await fetch(`/api/proxies/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interval_seconds: sec }),
+      });
+      if (!res.ok) throw new Error('Update interval failed');
+      fetchProxies();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   const reloadPool = async () => {
     try {
       const res = await fetch('/api/proxies/reload', { method: 'POST' });
@@ -227,6 +243,7 @@ export default function ManageProxiesTab({ status }) {
                     <th>Port</th>
                     <th>User</th>
                     <th>Last used</th>
+                    <th>Interval (s)</th>
                     <th>Last success</th>
                     <th>Success</th>
                     <th>Failed</th>
@@ -243,6 +260,24 @@ export default function ManageProxiesTab({ status }) {
                       <td>{p.port}</td>
                       <td>{p.username || '—'}</td>
                       <td>{formatDate(p.last_used_at)}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min={0}
+                          className="proxy-interval-input"
+                          defaultValue={p.interval_seconds ?? 10}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (String(v) !== String(p.interval_seconds ?? 10)) {
+                              updateInterval(p.id, v);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.target.blur();
+                          }}
+                          title="Min seconds between scrape uses for this proxy"
+                        />
+                      </td>
                       <td>{formatDate(p.last_success_at)}</td>
                       <td className="stat-success">
                         {formatCount(p.total_success_request_count)}

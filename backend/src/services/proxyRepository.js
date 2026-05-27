@@ -1,4 +1,5 @@
 import { pool } from '../db.js';
+import { config } from '../config.js';
 
 const SUPPORTED_PROTOCOLS = new Set(['socks5', 'socks4', 'http', 'https']);
 
@@ -146,7 +147,7 @@ export async function listProxies({ page = 1, limit = 50, search = '', enabledOn
   const listSql = `
     SELECT id, protocol, host, port, username,
            CASE WHEN password <> '' THEN true ELSE false END AS has_password,
-           enabled, last_success_at, last_used_at,
+           enabled, last_success_at, last_used_at, interval_seconds,
            total_success_request_count, total_failed_request_count, created_at
     FROM proxies
     WHERE ${where}
@@ -175,7 +176,7 @@ export async function listProxies({ page = 1, limit = 50, search = '', enabledOn
 export async function listEnabledProxiesForPool() {
   const { rows } = await pool.query(
     `SELECT id, protocol, host, port, username, password,
-            last_success_at, last_used_at,
+            last_success_at, last_used_at, interval_seconds,
             total_success_request_count, total_failed_request_count
      FROM proxies
      WHERE enabled = true
@@ -200,10 +201,10 @@ export async function bulkInsertProxies(protocol, entries) {
     await client.query('BEGIN');
     for (const e of entries) {
       const { rowCount } = await client.query(
-        `INSERT INTO proxies (protocol, host, port, username, password)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO proxies (protocol, host, port, username, password, interval_seconds)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (protocol, host, port, username) DO NOTHING`,
-        [protocol, e.host, e.port, e.username || '', e.password || ''],
+        [protocol, e.host, e.port, e.username || '', e.password || '', config.proxyDefaultIntervalSeconds],
       );
       if (rowCount > 0) inserted += 1;
       else skipped += 1;
@@ -223,6 +224,15 @@ export async function setProxyEnabled(id, enabled) {
   const { rowCount } = await pool.query(
     `UPDATE proxies SET enabled = $2 WHERE id = $1`,
     [id, enabled],
+  );
+  return rowCount > 0;
+}
+
+export async function setProxyInterval(id, intervalSeconds) {
+  const sec = Math.max(0, Math.floor(Number(intervalSeconds)));
+  const { rowCount } = await pool.query(
+    `UPDATE proxies SET interval_seconds = $2 WHERE id = $1`,
+    [id, sec],
   );
   return rowCount > 0;
 }

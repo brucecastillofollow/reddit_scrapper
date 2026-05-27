@@ -8,6 +8,7 @@ import {
   listProxies,
   parseProxyLines,
   setProxyEnabled,
+  setProxyInterval,
 } from '../services/proxyRepository.js';
 import { refreshProxyPool } from '../services/proxyPool.js';
 
@@ -85,16 +86,27 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid proxy id' });
     }
 
-    const enabled = req.body.enabled;
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled (boolean) required' });
+    const { enabled, interval_seconds: intervalSeconds } = req.body;
+    if (enabled === undefined && intervalSeconds === undefined) {
+      return res.status(400).json({ error: 'enabled and/or interval_seconds required' });
     }
 
-    const ok = await setProxyEnabled(id, enabled);
-    if (!ok) return res.status(404).json({ error: 'Proxy not found' });
+    let updated = false;
+    if (typeof enabled === 'boolean') {
+      updated = (await setProxyEnabled(id, enabled)) || updated;
+    }
+    if (intervalSeconds !== undefined) {
+      const sec = Number(intervalSeconds);
+      if (!Number.isFinite(sec) || sec < 0) {
+        return res.status(400).json({ error: 'interval_seconds must be a non-negative number' });
+      }
+      updated = (await setProxyInterval(id, sec)) || updated;
+    }
+
+    if (!updated) return res.status(404).json({ error: 'Proxy not found' });
 
     await refreshProxyPool();
-    res.json({ message: enabled ? 'Proxy enabled' : 'Proxy disabled' });
+    res.json({ message: 'Proxy updated' });
   } catch (err) {
     next(err);
   }
