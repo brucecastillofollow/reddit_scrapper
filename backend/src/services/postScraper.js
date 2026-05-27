@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { getGlobal, updateGlobal, updateScrapeStatus, recordPostScrapeRun } from '../db.js';
 import { runScrapeOnEndpointWithCookieRetry } from './proxyPool.js';
-import { runWithDbThenEnvFailover } from './proxyScrape.js';
+import { runWithEnvRotating } from './proxyScrape.js';
 import { fetchRedditJsonWithClient } from './redditFetch.js';
 import { toUtcDate, isAtOrBeforeUtc } from './scrapeBounds.js';
 import { logPostScrape } from './scrapeLogger.js';
@@ -347,7 +347,7 @@ async function runPostScrapeOnEndpoint(endpoint) {
   }
 }
 
-/** DB proxies first; env fallbacks if all DB proxies fail (same session per proxy for pagination). */
+/** Env proxies only (.env), rotated each run. */
 export async function runPostScrape() {
-  return runWithDbThenEnvFailover((endpoint) => runPostScrapeOnEndpoint(endpoint));
+  return runWithEnvRotating((endpoint) => runPostScrapeOnEndpoint(endpoint));
 }

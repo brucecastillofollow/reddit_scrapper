@@ -1,16 +1,72 @@
 import {
-  getDbProxyCount,
   getEligibleDbProxyCount,
   getEndpointsForFailover,
   getNextDbEndpoint,
+  getNextEnvEndpoint,
+  getDbProxyCount,
   runScrapeOnEndpoint,
 } from './proxyPool.js';
 
 /**
- * One eligible DB proxy per scrape (due interval, not quarantined).
- * No proper DB proxy → env proxies from .env (PROXY_1…, PROXY_LIST, direct).
- * DB failure → env fallback.
+ * Post scraper: env proxies only (PROXY_1…, PROXY_LIST, direct). Rotates on each scrape.
+ * Tries next env proxy on failure within the same run.
  */
+export async function runWithEnvRotating(runOnEndpoint) {
+  const envEndpoints = getEndpointsForFailover(null, { source: 'env' });
+  if (!envEndpoints.length) {
+    throw new Error(
+      'Post scrape failed: no env proxies (set PROXY_1, PROXY_LIST, or USE_DIRECT=true)',
+    );
+  }
+
+  const first = getNextEnvEndpoint();
+  const startIndex = Math.max(
+    0,
+    envEndpoints.findIndex((e) => e.id === first?.id),
+  );
+
+  let lastErr;
+  for (let i = 0; i < envEndpoints.length; i += 1) {
+    const endpoint = envEndpoints[(startIndex + i) % envEndpoints.length];
+    try {
+      if (i === 0) {
+        console.log(`[post-scrape] env ${endpoint.id}`);
+      } else {
+        console.log(`[post-scrape] env rotate ${endpoint.id}`);
+      }
+      return await runOnEndpoint(endpoint);
+    } catch (err) {
+      lastErr = err;
+      const status = err.response?.status ?? err.status ?? null;
+      const hasNext = i < envEndpoints.length - 1;
+      console.warn(
+        `[post-scrape] env ${endpoint.id} failed` +
+          (status ? ` (${status})` : ` (${err.message})`) +
+          (hasNext ? ' — next env proxy' : ''),
+      );
+    }
+  }
+
+  throw lastErr ?? new Error('Post scrape failed: all env proxies failed');
+}
+
+/**
+ * Comment scraper: DB proxies table only (no .env fallback).
+ */
+export async function runWithDbOnly(runOnEndpoint) {
+  const endpoint = await getNextDbEndpoint();
+  if (!endpoint) {
+    const msg =
+      getDbProxyCount() > 0
+        ? `Comment scrape failed: no eligible db proxy (${getEligibleDbProxyCount()}/${getDbProxyCount()} ready)`
+        : 'Comment scrape failed: no proxies in database';
+    throw new Error(msg);
+  }
+
+  return runOnEndpoint(endpoint);
+}
+
+/** @deprecated use runWithEnvRotating (posts) or runWithDbOnly (comments) */
 export async function runWithDbThenEnvFailover(runOnEndpoint) {
   let lastErr;
   const dbEndpoint = await getNextDbEndpoint();

@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
 import { runScrapeOnEndpointWithCookieRetry } from './proxyPool.js';
-import { runWithDbThenEnvFailover } from './proxyScrape.js';
+import { runWithDbOnly } from './proxyScrape.js';
 import { fetchRedditJsonWithClient } from './redditFetch.js';
 import { computeCommentInterval } from './commentInterval.js';
 import { getSubredditWeightedActivity } from './commentActivity.js';
@@ -158,7 +158,7 @@ export async function runCommentScrapeForSubreddit(subRow) {
   const startedAt = Date.now();
 
   try {
-    return await runWithDbThenEnvFailover((endpoint) =>
+    return await runWithDbOnly((endpoint) =>
       runScrapeOnEndpointWithCookieRetry(endpoint, async (client) => {
     const stats = { new: 0, existing: 0, total: 0 };
     const ctx = createCommentScrapeContext({ neverScraped, watermark });

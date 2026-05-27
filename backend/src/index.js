@@ -1,4 +1,17 @@
 import './loadEnv.js';
+
+process.on('uncaughtException', (err) => {
+  console.error('\n[fatal] uncaughtException — process will exit');
+  console.error(err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('\n[fatal] unhandledRejection — process will exit');
+  console.error(reason);
+  process.exit(1);
+});
+
 import express from 'express';
 import cors from 'cors';
 
@@ -41,6 +54,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  console.error('\n[fatal] startup failed');
   console.error(err);
   process.exit(1);
 });

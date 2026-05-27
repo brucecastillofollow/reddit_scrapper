@@ -505,7 +505,7 @@ export function getNextEndpoint({ source } = {}) {
   return endpoint;
 }
 
-/** Prefer DB proxies; returns null only when db pool empty. Updates last_used_at. */
+/** DB proxy for comment scrapes. Updates last_used_at. */
 export async function getNextDbEndpoint() {
   const endpoint = getNextEndpoint({ source: 'db' });
   if (endpoint?.proxyDbId) {
@@ -514,6 +514,11 @@ export async function getNextDbEndpoint() {
     await recordProxyUsed(endpoint.proxyDbId);
   }
   return endpoint;
+}
+
+/** Env proxy for post scrapes (round-robin). Does not touch proxies table. */
+export function getNextEnvEndpoint() {
+  return getNextEndpoint({ source: 'env' });
 }
 
 export async function acquireScrapeEndpoint() {
