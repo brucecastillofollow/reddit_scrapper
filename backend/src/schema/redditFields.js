@@ -269,7 +269,6 @@ export function rowFromRedditPost(data) {
     row.created_utc = coerce(data.created, TS);
   }
   if (!row.subreddit) row.subreddit = '';
-  if (!row.created_utc) row.created_utc = new Date();
 
   return row;
 }
@@ -292,7 +291,6 @@ export function rowFromRedditComment(data) {
     row.created_utc = coerce(data.created, TS);
   }
   if (!row.subreddit) row.subreddit = '';
-  if (!row.created_utc) row.created_utc = new Date();
 
   return row;
 }

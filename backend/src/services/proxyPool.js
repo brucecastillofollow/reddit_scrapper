@@ -21,6 +21,7 @@ import {
 import {
   acquireRedditCookieAccount,
   applyRedditCookiesToJar,
+  getRedditCookieAccountCount,
 } from './redditCookiePool.js';
 import {
   clearAllProxyHealth,
@@ -230,8 +231,10 @@ export function isProxyInFlight(endpoint) {
   return proxyInFlight.get(id) === true;
 }
 
-export async function runScrapeOnEndpoint(endpoint, fn) {
+export async function runScrapeOnEndpoint(endpoint, fn, { clearJarFirst = false } = {}) {
   return runOnProxy(endpoint, async () => {
+    if (clearJarFirst) await clearCookieJar(endpoint);
+
     const jar = await getCookieJar(endpoint);
     const redditAccount = acquireRedditCookieAccount();
     if (redditAccount) {
@@ -246,6 +249,21 @@ export async function runScrapeOnEndpoint(endpoint, fn) {
       await persistCookieJar(endpoint);
     }
   });
+}
+
+/** On Reddit 403/404/etc., clear session and retry once with the next cookie account. */
+export async function runScrapeOnEndpointWithCookieRetry(endpoint, fn) {
+  try {
+    return await runScrapeOnEndpoint(endpoint, fn);
+  } catch (err) {
+    if (!isRedditHttpError(err) || getRedditCookieAccountCount() === 0) throw err;
+
+    const status = err.response?.status ?? err.status ?? '?';
+    console.warn(
+      `[scrape] ${endpoint.id} reddit rejection (${status}) — retry once with next cookie`,
+    );
+    return runScrapeOnEndpoint(endpoint, fn, { clearJarFirst: true });
+  }
 }
 
 function emptyCounts() {

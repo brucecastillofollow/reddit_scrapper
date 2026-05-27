@@ -4,6 +4,10 @@ import { config } from '../config.js';
 export function toUtcDate(value) {
   if (value == null) return null;
   if (value instanceof Date) return value;
+  if (typeof value === 'number') {
+    // Reddit API uses Unix seconds; JS Date expects ms
+    return new Date(value < 1e12 ? value * 1000 : value);
+  }
   return new Date(value);
 }
 
@@ -20,4 +24,9 @@ export function utcCommentCutoff() {
 export function isAtOrBeforeUtc(a, b) {
   if (!a || !b) return false;
   return toUtcDate(a).getTime() <= toUtcDate(b).getTime();
+}
+
+export function isStrictlyBeforeUtc(a, b) {
+  if (!a || !b) return false;
+  return toUtcDate(a).getTime() < toUtcDate(b).getTime();
 }

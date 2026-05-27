@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { updateScrapeStatus, recordCommentScrapeRun } from '../db.js';
-import { runScrapeOnEndpoint } from './proxyPool.js';
+import { runScrapeOnEndpointWithCookieRetry } from './proxyPool.js';
 import { runWithDbThenEnvFailover } from './proxyScrape.js';
 import { fetchRedditJsonWithClient } from './redditFetch.js';
 import { computeCommentInterval } from './commentInterval.js';
@@ -156,14 +156,15 @@ export async function runCommentScrapeForSubreddit(subRow) {
   const hot = isHotSubreddit(subRow);
   const watermark = last_timestamp ? toUtcDate(last_timestamp) : null;
   const startedAt = Date.now();
-  const stats = { new: 0, existing: 0, total: 0 };
-  const ctx = createCommentScrapeContext({ neverScraped, watermark });
-  let bounds = { oldestTs: null, newestTs: watermark };
-  let pages = 0;
 
   try {
     return await runWithDbThenEnvFailover((endpoint) =>
-      runScrapeOnEndpoint(endpoint, async (client) => {
+      runScrapeOnEndpointWithCookieRetry(endpoint, async (client) => {
+    const stats = { new: 0, existing: 0, total: 0 };
+    const ctx = createCommentScrapeContext({ neverScraped, watermark });
+    let bounds = { oldestTs: null, newestTs: watermark };
+    let pages = 0;
+
     let { data: listing } = await fetchRedditJsonWithClient(
       client,
       commentsUrl(name),

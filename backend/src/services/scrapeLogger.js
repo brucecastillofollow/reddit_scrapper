@@ -91,6 +91,8 @@ export async function logPostScrape(entry) {
       `[post-scrape] ${durationS}s` +
       ` new=${record.posts_new ?? 0} existing=${record.posts_existing ?? 0}` +
       ` pages=${record.pages ?? 0}` +
+      (record.outcome ? ` outcome=${record.outcome}` : '') +
+      (record.reddit_children_total != null ? ` reddit_items=${record.reddit_children_total}` : '') +
       (record.stop_reason ? ` stop=${record.stop_reason}` : '') +
       (record.downtime_sec != null ? ` downtime=${record.downtime_sec}s` : '') +
       (record.backlog_span_sec != null ? ` backlog=${record.backlog_span_sec}s` : '') +
