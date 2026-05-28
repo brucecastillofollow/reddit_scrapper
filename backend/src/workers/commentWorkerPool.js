@@ -105,14 +105,14 @@ function commentWorkerLoop(workerIndex) {
         releaseCommentTask(task.name);
       } catch (err) {
         const status = err?.response?.status ?? err?.status ?? null;
-        if (status === 403) {
+        if (status === 403 || status === 404) {
           await markSubredditForbidden(task.name);
           releaseCommentTask(task.name);
           await updateScrapeStatus({
-            last_comment_error: `[${label}] r/${task.name}: forbidden (403) - subreddit disabled`,
+            last_comment_error: `[${label}] r/${task.name}: forbidden (${status}) - subreddit disabled`,
             last_comment_finished_at: new Date(),
           });
-          console.warn(`[comment-${label}] r/${task.name}: marked forbidden after 403`);
+          console.warn(`[comment-${label}] r/${task.name}: marked forbidden after ${status}`);
           continue;
         }
         await logScrapeFailureFromError('comments', err, {
