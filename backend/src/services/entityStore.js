@@ -160,6 +160,7 @@ export async function buildCommentCoordinatorTasks({
           OR (
             total_posts > 0
             AND (new_posts::float * total_comment::float / total_posts::float) > $2
+            AND new_posts > ($1 * 2)
           )
          )
        ORDER BY
