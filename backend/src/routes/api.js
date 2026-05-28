@@ -25,31 +25,39 @@ router.get('/status', async (_req, res, next) => {
         SELECT
           COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE last_poll_at IS NOT NULL)::int AS scraped_once,
+          COUNT(*) FILTER (WHERE forbidden = true)::int AS forbidden,
           COUNT(*) FILTER (
-            WHERE last_poll_at IS NULL
+            WHERE forbidden = false
+               AND (
+                 last_poll_at IS NULL
                OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+               )
           )::int AS waiting,
           COUNT(*) FILTER (
-            WHERE last_poll_at IS NOT NULL
+            WHERE forbidden = false
+              AND last_poll_at IS NOT NULL
               AND last_poll_at + (interval_seconds || ' seconds')::interval > NOW()
           )::int AS scheduled
         FROM subreddit
       `),
         pool.query(
-          `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts,
+          `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts, forbidden,
                   total_comment, total_time, first_scraped_at, last_scraped_at
            FROM subreddit ORDER BY last_poll_at DESC NULLS LAST LIMIT 10`,
         ),
         pool.query(
-          `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts,
+          `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts, forbidden,
                   total_comment, total_time, first_scraped_at, last_scraped_at,
                   CASE
                     WHEN last_poll_at IS NULL THEN NULL
                     ELSE last_poll_at + (interval_seconds || ' seconds')::interval
                   END AS next_due_at
            FROM subreddit
-           WHERE last_poll_at IS NULL
-              OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+           WHERE forbidden = false
+             AND (
+               last_poll_at IS NULL
+               OR last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
+             )
            ORDER BY last_poll_at NULLS FIRST,
                     (last_poll_at + (interval_seconds || ' seconds')::interval) ASC
            LIMIT 15`,
@@ -90,6 +98,7 @@ router.get('/status', async (_req, res, next) => {
         scraped_once: subStats.scraped_once,
         waiting: subStats.waiting,
         scheduled: subStats.scheduled,
+        forbidden: subStats.forbidden,
         never_scraped: subStats.total - subStats.scraped_once,
       },
       waiting_subreddits: waitingSubs,
@@ -235,8 +244,9 @@ router.get('/subreddits', async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
       `SELECT name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts,
-              total_comment, total_time, first_scraped_at, last_scraped_at, last_scrape_new,
+              total_comment, total_time, first_scraped_at, last_scraped_at, last_scrape_new, forbidden,
               CASE
+                WHEN forbidden = true THEN 'forbidden'
                 WHEN last_poll_at IS NULL THEN 'waiting'
                 WHEN last_poll_at + (interval_seconds || ' seconds')::interval <= NOW() THEN 'waiting'
                 ELSE 'scheduled'

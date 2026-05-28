@@ -94,7 +94,7 @@ export async function resetSubredditNewPosts(name) {
 }
 
 const SUBREDDIT_TASK_COLUMNS = `
-  name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts, total_comment
+  name, last_timestamp, interval_seconds, last_poll_at, total_posts, new_posts, total_comment, forbidden
 `;
 
 async function fetchDueRows(client, { limit, exclude }) {
@@ -105,6 +105,7 @@ async function fetchDueRows(client, { limit, exclude }) {
     `SELECT ${SUBREDDIT_TASK_COLUMNS}
      FROM subreddit
      WHERE last_poll_at IS NOT NULL
+      AND forbidden = false
        AND last_poll_at + (interval_seconds || ' seconds')::interval <= NOW()
        ${excludeClause}
      ORDER BY (last_poll_at + (interval_seconds || ' seconds')::interval) ASC,
@@ -124,6 +125,7 @@ async function fetchNeverRows(client, { limit, exclude }) {
     `SELECT ${SUBREDDIT_TASK_COLUMNS}
      FROM subreddit
      WHERE last_poll_at IS NULL
+       AND forbidden = false
        ${excludeClause}
      ORDER BY name ASC
      LIMIT $1`,
@@ -152,11 +154,14 @@ export async function buildCommentCoordinatorTasks({
     const { rows: hotCandidates } = await client.query(
       `SELECT ${SUBREDDIT_TASK_COLUMNS}
        FROM subreddit
-       WHERE new_posts > $1
+       WHERE forbidden = false
+         AND (
+           new_posts > $1
           OR (
             total_posts > 0
             AND (new_posts::float * total_comment::float / total_posts::float) > $2
           )
+         )
        ORDER BY
          GREATEST(
            new_posts::float,
@@ -238,4 +243,14 @@ export async function updateSubreddit(name, fields) {
   const values = Object.values(fields);
   const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
   await pool.query(`UPDATE subreddit SET ${sets} WHERE name = $1`, [name, ...values]);
+}
+
+export async function markSubredditForbidden(name) {
+  await pool.query(
+    `UPDATE subreddit
+     SET forbidden = true,
+         new_posts = 0
+     WHERE name = $1`,
+    [name],
+  );
 }
