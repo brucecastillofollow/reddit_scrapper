@@ -19,7 +19,7 @@ import {
 } from './entityStore.js';
 
 function commentsUrl(subreddit) {
-  return `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/comments.json`;
+  return `https://old.reddit.com/r/${encodeURIComponent(subreddit)}/comments.json`;
 }
 
 const fetchMeta = (name) => ({

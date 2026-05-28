@@ -16,7 +16,7 @@ import {
   updatePost,
 } from './entityStore.js';
 
-const NEW_URL = 'https://www.reddit.com/r/all/new.json';
+const NEW_URL = 'https://old.reddit.com/r/all/new.json';
 
 function emptyDiagnostics() {
   return {
