@@ -43,6 +43,7 @@ export const config = {
   redditCookiesFile: process.env.REDDIT_COOKIES_FILE || './data/reddit-cookies.json',
 
   redditCookieBootstrap: bool(process.env.REDDIT_COOKIE_BOOTSTRAP, true),
+  redditCookieRequired: bool(process.env.REDDIT_COOKIE_REQUIRED, true),
 
   intervalMinSeconds: num(process.env.INTERVAL_MIN_SECONDS, 60),
 

@@ -244,6 +244,12 @@ export async function runScrapeOnEndpoint(endpoint, fn, { clearJarFirst = false 
 
     const jar = await getCookieJar(endpoint);
     const redditAccount = acquireRedditCookieAccount();
+    if (!redditAccount && config.redditCookieRequired) {
+      const cookiePath = config.redditCookiesFile;
+      throw new Error(
+        `Reddit cookie account required for scraping but none loaded (set REDDIT_COOKIES_FILE, or REDDIT_COOKIE_REQUIRED=false to allow fallback) [${cookiePath}]`,
+      );
+    }
     if (redditAccount) {
       await applyRedditCookiesToJar(jar, redditAccount);
     }
