@@ -16,7 +16,10 @@ import {
   updatePost,
 } from './entityStore.js';
 
-const NEW_URL = 'https://old.reddit.com/r/all/new.json';
+function postNewJsonUrl() {
+  const base = config.postRedditBaseUrl.replace(/\/+$/, '');
+  return `${base}/r/all/new.json`;
+}
 
 function emptyDiagnostics() {
   return {
@@ -180,7 +183,7 @@ async function processListing(listing, stats, bounds, ctx) {
 async function fetchNewPage(client, endpoint, params = {}) {
   return fetchRedditJsonWithClient(
     client,
-    NEW_URL,
+    postNewJsonUrl(),
     { limit: 100, ...params },
     { kind: 'posts', target: 'new.json' },
     endpoint,

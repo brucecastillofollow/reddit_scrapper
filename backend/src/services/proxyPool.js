@@ -668,9 +668,10 @@ export async function checkEndpointHealth(endpoint) {
       const client = await createRedditClient(endpoint);
       await ensureRedditSession(client, endpoint);
       await enforceProxyCooldown(endpoint);
-      await client.get('https://old.reddit.com/new.json', {
+      const probeUrl = `${config.postRedditBaseUrl.replace(/\/+$/, '')}/r/all/new.json`;
+      await client.get(probeUrl, {
         params: { limit: 1 },
-        headers: redditRequestHeaders('https://old.reddit.com/new.json'),
+        headers: redditRequestHeaders(probeUrl),
       });
       schedulePersistCookieJar(endpoint);
       recordProxyRequest(endpoint, { success: true });

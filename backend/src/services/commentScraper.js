@@ -18,10 +18,8 @@ import {
   resetSubredditNewPosts,
 } from './entityStore.js';
 
-const DEFAULT_COMMENT_BASE_URL = 'https://old.reddit.com';
-
-function commentsUrl(subreddit, baseUrl = DEFAULT_COMMENT_BASE_URL) {
-  const base = (baseUrl || DEFAULT_COMMENT_BASE_URL).replace(/\/+$/, '');
+function commentsUrl(subreddit, baseUrl = config.commentRedditBaseUrl) {
+  const base = (baseUrl || config.commentRedditBaseUrl).replace(/\/+$/, '');
   return `${base}/r/${encodeURIComponent(subreddit)}/comments.json`;
 }
 
@@ -160,7 +158,7 @@ export async function runCommentScrapeForSubreddit(subRow, { runWithProxy, reddi
   const watermark = last_timestamp ? toUtcDate(last_timestamp) : null;
   const startedAt = Date.now();
   const acquireProxy = runWithProxy ?? runWithDbOnly;
-  const baseUrl = redditBaseUrl ?? DEFAULT_COMMENT_BASE_URL;
+  const baseUrl = redditBaseUrl ?? config.commentRedditBaseUrl;
 
   try {
     return await acquireProxy((endpoint) =>

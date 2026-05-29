@@ -45,6 +45,16 @@ export const config = {
   redditCookieBootstrap: bool(process.env.REDDIT_COOKIE_BOOTSTRAP, true),
   redditCookieRequired: bool(process.env.REDDIT_COOKIE_REQUIRED, true),
 
+  postRedditBaseUrl: normalizeBaseUrl(
+    process.env.POST_REDDIT_BASE_URL,
+    'https://old.reddit.com',
+  ),
+
+  commentRedditBaseUrl: normalizeBaseUrl(
+    process.env.COMMENT_REDDIT_BASE_URL,
+    'https://old.reddit.com',
+  ),
+
   intervalMinSeconds: num(process.env.INTERVAL_MIN_SECONDS, 60),
 
   intervalMaxSeconds: num(process.env.INTERVAL_MAX_SECONDS, 3600),
