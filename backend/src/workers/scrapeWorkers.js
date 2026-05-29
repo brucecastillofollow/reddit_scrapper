@@ -3,6 +3,10 @@ import { updateScrapeStatus } from '../db.js';
 import { countHealthyProxies } from '../services/proxyPool.js';
 import { runPostScrape } from '../services/postScraper.js';
 import { startCommentWorkerPool, getCommentWorkerStats } from './commentWorkerPool.js';
+import {
+  startWebshareCommentWorkerPool,
+  getWebshareCommentWorkerStats,
+} from './webshareCommentWorkerPool.js';
 import { errorMessageWithProxy, logScrapeFailureFromError } from '../services/scrapeLogger.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -14,7 +18,10 @@ export function isPostScrapeRunning() {
 }
 
 export function getCommentQueueStatus() {
-  return getCommentWorkerStats();
+  return {
+    ...getCommentWorkerStats(),
+    webshare_pool: getWebshareCommentWorkerStats(),
+  };
 }
 
 /** Single post-scrape loop (dedicated async worker). */
@@ -75,8 +82,11 @@ async function proxyHealthLoop() {
 export function startScrapeWorkers() {
   postWorkerLoop().catch((err) => console.error('[post-worker] fatal', err));
   startCommentWorkerPool();
+  startWebshareCommentWorkerPool();
   proxyHealthLoop().catch(() => {});
-  console.log('Scrape workers started: 1 post loop + comment coordinator/worker pool');
+  console.log(
+    'Scrape workers started: 1 post loop + DB comment pool + webshare comment pool',
+  );
 }
 
 export async function triggerPostScrape() {

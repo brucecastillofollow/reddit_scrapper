@@ -191,7 +191,7 @@ export function isProxyRequestError(err) {
 }
 
 export async function enforceProxyCooldown(endpoint) {
-  const cooldownMs = randomCooldownMs();
+  const cooldownMs = randomCooldownMs(endpoint);
   if (cooldownMs <= 0) return;
 
   const id = endpoint?.id ?? 'unknown';
@@ -201,9 +201,17 @@ export async function enforceProxyCooldown(endpoint) {
   lastUsedAt.set(id, Date.now());
 }
 
-function randomCooldownMs() {
-  const minSec = config.proxyCooldownMinSeconds;
-  const maxSec = Math.max(minSec, config.proxyCooldownMaxSeconds);
+function randomCooldownMs(endpoint) {
+  const minSec =
+    endpoint?.source === 'webshare'
+      ? config.webshareProxyCooldownMinSeconds
+      : config.proxyCooldownMinSeconds;
+  const maxSec = Math.max(
+    minSec,
+    endpoint?.source === 'webshare'
+      ? config.webshareProxyCooldownMaxSeconds
+      : config.proxyCooldownMaxSeconds,
+  );
   if (maxSec <= 0 || minSec <= 0) return 0;
   if (maxSec === minSec) return minSec * 1000;
   const seconds = minSec + Math.random() * (maxSec - minSec);

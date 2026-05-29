@@ -255,3 +255,56 @@ export async function markSubredditForbidden(name) {
     [name],
   );
 }
+
+/**
+ * Webshare comment batch: never-scraped first (name ASC), then semi-hot fill.
+ * Semi-hot activity ratio in (0.3 * hotActivityMin, 0.8 * hotActivityMin], highest first.
+ */
+export async function buildWebshareCommentTasks({
+  batchSize = 250,
+  hotActivityMin = 100,
+} = {}) {
+  const semiMin = hotActivityMin * 0.3;
+  const semiMax = hotActivityMin * 0.8;
+
+  const { rows: neverRows } = await pool.query(
+    `SELECT ${SUBREDDIT_TASK_COLUMNS}
+     FROM subreddit
+     WHERE forbidden = false
+       AND last_poll_at IS NULL
+     ORDER BY name ASC
+     LIMIT $1`,
+    [batchSize],
+  );
+
+  const tasks = [...neverRows];
+  const remaining = batchSize - tasks.length;
+
+  if (remaining > 0) {
+    const { rows: semiHotRows } = await pool.query(
+      `SELECT ${SUBREDDIT_TASK_COLUMNS},
+              (new_posts::float * total_comment::float / total_posts::float) AS activity_score
+       FROM subreddit
+       WHERE forbidden = false
+         AND last_poll_at IS NOT NULL
+         AND total_posts > 0
+         AND (new_posts::float * total_comment::float / total_posts::float) > $1
+         AND (new_posts::float * total_comment::float / total_posts::float) <= $2
+       ORDER BY activity_score DESC, name ASC
+       LIMIT $3`,
+      [semiMin, semiMax, remaining],
+    );
+    tasks.push(...semiHotRows);
+  }
+
+  return {
+    tasks,
+    counts: {
+      never: neverRows.length,
+      semi_hot: tasks.length - neverRows.length,
+      batch_size: batchSize,
+      semi_hot_min: semiMin,
+      semi_hot_max: semiMax,
+    },
+  };
+}

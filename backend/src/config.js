@@ -109,6 +109,18 @@ export const config = {
 
   proxyUrls: loadProxyUrls(),
 
+  webshareProxyUrl: (process.env.WEBSHARE_PROXY_URL || '').trim(),
+
+  webshareCommentEnabled: bool(process.env.WEBSHARE_COMMENT_ENABLED, true),
+
+  webshareCommentIntervalSeconds: num(process.env.WEBSHARE_COMMENT_INTERVAL_SECONDS, 30),
+
+  webshareCommentBatchSize: num(process.env.WEBSHARE_COMMENT_BATCH_SIZE, 250),
+
+  webshareProxyCooldownMinSeconds: num(process.env.WEBSHARE_PROXY_COOLDOWN_MIN_SECONDS, 0),
+
+  webshareProxyCooldownMaxSeconds: num(process.env.WEBSHARE_PROXY_COOLDOWN_MAX_SECONDS, 0),
+
 };
 
 

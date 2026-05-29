@@ -6,6 +6,7 @@ import {
   getDbProxyCount,
   runScrapeOnEndpoint,
 } from './proxyPool.js';
+import { getWebshareEndpoint } from './webshareProxy.js';
 
 /**
  * Post scraper: env proxies only (PROXY_1…, PROXY_LIST, direct). Rotates on each scrape.
@@ -63,6 +64,15 @@ export async function runWithDbOnly(runOnEndpoint) {
     throw new Error(msg);
   }
 
+  return runOnEndpoint(endpoint);
+}
+
+/** Webshare rotating proxy — one endpoint slot per concurrent task (parallel-safe). */
+export async function runWithWebshareSlot(runOnEndpoint, slot) {
+  const endpoint = getWebshareEndpoint(slot);
+  if (!endpoint) {
+    throw new Error('Webshare comment scrape failed: WEBSHARE_PROXY_URL not configured');
+  }
   return runOnEndpoint(endpoint);
 }
 

@@ -150,15 +150,16 @@ async function resolveInterval(subreddit, stats, bounds, pollAt, lastTimestamp, 
   };
 }
 
-export async function runCommentScrapeForSubreddit(subRow) {
+export async function runCommentScrapeForSubreddit(subRow, { runWithProxy } = {}) {
   const { name, last_timestamp, interval_seconds: currentInterval } = subRow;
   const neverScraped = isNeverScraped(subRow);
   const hot = isHotSubreddit(subRow);
   const watermark = last_timestamp ? toUtcDate(last_timestamp) : null;
   const startedAt = Date.now();
+  const acquireProxy = runWithProxy ?? runWithDbOnly;
 
   try {
-    return await runWithDbOnly((endpoint) =>
+    return await acquireProxy((endpoint) =>
       runScrapeOnEndpointWithCookieRetry(endpoint, async (client) => {
     const stats = { new: 0, existing: 0, total: 0 };
     const ctx = createCommentScrapeContext({ neverScraped, watermark });
