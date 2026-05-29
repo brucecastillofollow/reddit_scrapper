@@ -21,7 +21,7 @@ import apiRouter from './routes/api.js';
 import proxiesRouter from './routes/proxies.js';
 import { startScrapeWorkers } from './workers/scrapeWorkers.js';
 import { getPoolSummary, refreshProxyPool } from './services/proxyPool.js';
-import { loadRedditCookiePool } from './services/redditCookiePool.js';
+import { loadRedditCookiePools } from './services/redditCookiePool.js';
 
 const app = express();
 app.use(cors());
@@ -42,7 +42,7 @@ app.use((err, _req, res, _next) => {
 
 async function main() {
   await initDb();
-  await loadRedditCookiePool();
+  await loadRedditCookiePools();
   await refreshProxyPool();
   startScrapeWorkers();
 

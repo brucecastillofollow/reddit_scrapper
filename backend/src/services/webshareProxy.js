@@ -35,3 +35,13 @@ export function getWebshareEndpoint(slot) {
 export function isWebshareConfigured() {
   return Boolean(config.webshareProxyUrl?.trim());
 }
+
+export function warnWebshareProxyProtocol() {
+  const url = config.webshareProxyUrl?.trim();
+  if (!url) return;
+  if (!url.startsWith('socks5://')) {
+    console.warn(
+      `[webshare-proxy] WEBSHARE_PROXY_URL should use socks5:// (got ${url.split(':')[0]}:) — wrong protocol can cause failures`,
+    );
+  }
+}

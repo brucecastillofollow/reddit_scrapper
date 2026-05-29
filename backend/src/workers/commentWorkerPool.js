@@ -12,6 +12,7 @@ import {
 } from '../services/commentTaskQueue.js';
 import { markSubredditForbidden } from '../services/entityStore.js';
 import { errorMessageWithProxy, logScrapeFailureFromError } from '../services/scrapeLogger.js';
+import { isWebshareBatchActive } from '../services/commentPoolGate.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -49,6 +50,11 @@ async function commentCoordinatorLoop() {
 
   while (true) {
     try {
+      if (config.websharePauseDbComments && isWebshareBatchActive()) {
+        await sleep(tickMs);
+        continue;
+      }
+
       const capacity = getCommentTaskCapacity();
       if (capacity > 0) {
         const { tasks, counts } = await buildCommentCoordinatorTasks({
@@ -93,6 +99,11 @@ function commentWorkerLoop(workerIndex) {
     }
 
     while (true) {
+      if (config.websharePauseDbComments && isWebshareBatchActive()) {
+        await sleep(500);
+        continue;
+      }
+
       const task = popCommentTask();
       if (!task) {
         await sleep(idleSleepMs);

@@ -2,8 +2,9 @@ import { config } from '../config.js';
 import { runCommentScrapeForSubreddit } from '../services/commentScraper.js';
 import { buildWebshareCommentTasks, markSubredditForbidden } from '../services/entityStore.js';
 import { runWithWebshareSlot } from '../services/proxyScrape.js';
-import { isWebshareConfigured } from '../services/webshareProxy.js';
+import { isWebshareConfigured, warnWebshareProxyProtocol } from '../services/webshareProxy.js';
 import { errorMessageWithProxy, logScrapeFailureFromError } from '../services/scrapeLogger.js';
+import { setWebshareBatchActive } from '../services/commentPoolGate.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -115,12 +116,14 @@ async function webshareCommentLoop() {
     }
 
     batchRunning = true;
+    if (config.websharePauseDbComments) setWebshareBatchActive(true);
     try {
       await runWebshareBatch();
     } catch (err) {
       console.error('[webshare-comment] batch error:', err.message);
     } finally {
       batchRunning = false;
+      if (config.websharePauseDbComments) setWebshareBatchActive(false);
     }
 
     const elapsed = Date.now() - attemptStart;
@@ -137,11 +140,13 @@ export function startWebshareCommentWorkerPool() {
   }
 
   poolStarted = true;
+  warnWebshareProxyProtocol();
   webshareCommentLoop().catch((err) => console.error('[webshare-comment] fatal', err));
 
   console.log(
     `[webshare-comment] started: every ${config.webshareCommentIntervalSeconds}s, ` +
-      `batch=${config.webshareCommentBatchSize}, concurrent via rotating proxy`,
+      `batch=${config.webshareCommentBatchSize}, cookies=${config.webshareUseRedditCookies ? 'dedicated/shared file' : 'bootstrap-only'}, ` +
+      `pause_db=${config.websharePauseDbComments}`,
   );
 }
 

@@ -2,9 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { config } from '../config.js';
 
-/** @type {{ label: string, cookies: object[] }[]} */
-let accounts = [];
-let rotateIndex = 0;
+/** @type {Map<string, { accounts: { label: string, cookies: object[] }[], rotateIndex: number }>} */
+const pools = new Map();
 
 function normalizeAccount(entry, index) {
   if (Array.isArray(entry)) {
@@ -19,47 +18,86 @@ function normalizeAccount(entry, index) {
   return null;
 }
 
-export async function loadRedditCookiePool() {
-  const filePath = path.resolve(config.redditCookiesFile);
+function parseCookieFile(data) {
+  if (!Array.isArray(data)) return [];
+  if (data.length > 0 && data[0]?.name && data[0]?.value) {
+    return [{ label: 'account_1', cookies: data }];
+  }
+  return data
+    .map((entry, i) => normalizeAccount(entry, i))
+    .filter((a) => a && a.cookies.length > 0);
+}
+
+async function loadPool(channel, filePath) {
+  const resolved = path.resolve(filePath);
   try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    const data = JSON.parse(raw);
-    if (!Array.isArray(data)) {
-      console.warn('[reddit-cookies] expected JSON array — pool empty');
-      accounts = [];
-      return 0;
-    }
-
-    if (data.length > 0 && data[0]?.name && data[0]?.value) {
-      accounts = [{ label: 'account_1', cookies: data }];
-    } else {
-      accounts = data
-        .map((entry, i) => normalizeAccount(entry, i))
-        .filter((a) => a && a.cookies.length > 0);
-    }
-
-    console.log(`[reddit-cookies] loaded ${accounts.length} account(s) from ${filePath}`);
+    const raw = await fs.readFile(resolved, 'utf8');
+    const accounts = parseCookieFile(JSON.parse(raw));
+    pools.set(channel, { accounts, rotateIndex: 0 });
+    console.log(`[reddit-cookies:${channel}] loaded ${accounts.length} account(s) from ${resolved}`);
     return accounts.length;
   } catch (err) {
     if (err.code === 'ENOENT') {
-      console.log(`[reddit-cookies] no file at ${filePath} — using proxy/bootstrap cookies only`);
+      console.log(`[reddit-cookies:${channel}] no file at ${resolved}`);
     } else {
-      console.warn('[reddit-cookies] load failed:', err.message);
+      console.warn(`[reddit-cookies:${channel}] load failed:`, err.message);
     }
-    accounts = [];
+    pools.set(channel, { accounts: [], rotateIndex: 0 });
     return 0;
   }
 }
 
-export function getRedditCookieAccountCount() {
-  return accounts.length;
+export async function loadRedditCookiePools() {
+  const defaultCount = await loadPool('default', config.redditCookiesFile);
+
+  const webshareFile = config.webshareRedditCookiesFile || config.redditCookiesFile;
+  if (config.webshareUseRedditCookies && webshareFile !== config.redditCookiesFile) {
+    await loadPool('webshare', webshareFile);
+  } else if (config.webshareUseRedditCookies) {
+    const def = pools.get('default');
+    pools.set('webshare', {
+      accounts: def?.accounts ?? [],
+      rotateIndex: 0,
+    });
+    console.warn(
+      '[reddit-cookies:webshare] using same accounts as default — set WEBSHARE_REDDIT_COOKIES_FILE or WEBSHARE_USE_REDDIT_COOKIES=false',
+    );
+  }
+
+  return defaultCount;
 }
 
-/** Round-robin next account for one scrape run (post or comment). */
-export function acquireRedditCookieAccount() {
-  if (!accounts.length) return null;
-  const account = accounts[rotateIndex % accounts.length];
-  rotateIndex = (rotateIndex + 1) % accounts.length;
+/** @deprecated use loadRedditCookiePools */
+export async function loadRedditCookiePool() {
+  return loadRedditCookiePools();
+}
+
+function poolForChannel(channel) {
+  if (channel === 'webshare' && config.webshareUseRedditCookies) {
+    return pools.get('webshare') ?? pools.get('default');
+  }
+  return pools.get('default');
+}
+
+export function cookieChannelForEndpoint(endpoint) {
+  return endpoint?.source === 'webshare' ? 'webshare' : 'default';
+}
+
+export function getRedditCookieAccountCount(channel = 'default') {
+  return poolForChannel(channel)?.accounts.length ?? 0;
+}
+
+/** Round-robin next account for one scrape run. */
+export function acquireRedditCookieAccount(channel = 'default') {
+  if (channel === 'webshare' && !config.webshareUseRedditCookies) {
+    return null;
+  }
+
+  const pool = poolForChannel(channel);
+  if (!pool?.accounts.length) return null;
+
+  const account = pool.accounts[pool.rotateIndex % pool.accounts.length];
+  pool.rotateIndex = (pool.rotateIndex + 1) % pool.accounts.length;
   return account;
 }
 

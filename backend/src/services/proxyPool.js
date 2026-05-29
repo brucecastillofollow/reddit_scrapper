@@ -21,6 +21,7 @@ import {
 import {
   acquireRedditCookieAccount,
   applyRedditCookiesToJar,
+  cookieChannelForEndpoint,
   getRedditCookieAccountCount,
 } from './redditCookiePool.js';
 import {
@@ -251,8 +252,9 @@ export async function runScrapeOnEndpoint(endpoint, fn, { clearJarFirst = false 
     if (clearJarFirst) await clearCookieJar(endpoint);
 
     const jar = await getCookieJar(endpoint);
-    const redditAccount = acquireRedditCookieAccount();
-    if (!redditAccount && config.redditCookieRequired) {
+    const channel = cookieChannelForEndpoint(endpoint);
+    const redditAccount = acquireRedditCookieAccount(channel);
+    if (!redditAccount && config.redditCookieRequired && channel === 'default') {
       const cookiePath = config.redditCookiesFile;
       throw new Error(
         `Reddit cookie account required for scraping but none loaded (set REDDIT_COOKIES_FILE, or REDDIT_COOKIE_REQUIRED=false to allow fallback) [${cookiePath}]`,
@@ -277,16 +279,17 @@ export async function runScrapeOnEndpointWithCookieRetry(endpoint, fn) {
   try {
     return await runScrapeOnEndpoint(endpoint, fn);
   } catch (err) {
+    const channel = cookieChannelForEndpoint(endpoint);
     if (
       (!isRedditHttpError(err) && !isRedditRateLimitError(err)) ||
-      getRedditCookieAccountCount() === 0
+      getRedditCookieAccountCount(channel) === 0
     ) {
       throw err;
     }
 
     const status = err.response?.status ?? err.status ?? '?';
     console.warn(
-      `[scrape] ${endpoint.id} reddit ${status === 429 ? 'rate limit' : 'rejection'} (${status}) — retry once with next cookie`,
+      `[scrape] ${endpoint.id} reddit ${status === 429 ? 'rate limit' : 'rejection'} (${status}) — retry once with next cookie (${channel})`,
     );
     return runScrapeOnEndpoint(endpoint, fn, { clearJarFirst: true });
   }

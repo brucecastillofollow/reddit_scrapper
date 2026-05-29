@@ -121,6 +121,15 @@ export const config = {
 
   webshareProxyCooldownMaxSeconds: num(process.env.WEBSHARE_PROXY_COOLDOWN_MAX_SECONDS, 0),
 
+  /** false = webshare uses bootstrap cookies only (protects main REDDIT_COOKIES_FILE from 429) */
+  webshareUseRedditCookies: bool(process.env.WEBSHARE_USE_REDDIT_COOKIES, false),
+
+  webshareRedditCookiesFile:
+    (process.env.WEBSHARE_REDDIT_COOKIES_FILE || '').trim() || null,
+
+  /** Pause DB comment workers while a webshare batch is running */
+  websharePauseDbComments: bool(process.env.WEBSHARE_PAUSE_DB_COMMENTS, true),
+
 };
 
 
