@@ -18,8 +18,11 @@ import {
   resetSubredditNewPosts,
 } from './entityStore.js';
 
-function commentsUrl(subreddit) {
-  return `https://old.reddit.com/r/${encodeURIComponent(subreddit)}/comments.json`;
+const DEFAULT_COMMENT_BASE_URL = 'https://old.reddit.com';
+
+function commentsUrl(subreddit, baseUrl = DEFAULT_COMMENT_BASE_URL) {
+  const base = (baseUrl || DEFAULT_COMMENT_BASE_URL).replace(/\/+$/, '');
+  return `${base}/r/${encodeURIComponent(subreddit)}/comments.json`;
 }
 
 const fetchMeta = (name) => ({
@@ -150,13 +153,14 @@ async function resolveInterval(subreddit, stats, bounds, pollAt, lastTimestamp, 
   };
 }
 
-export async function runCommentScrapeForSubreddit(subRow, { runWithProxy } = {}) {
+export async function runCommentScrapeForSubreddit(subRow, { runWithProxy, redditBaseUrl } = {}) {
   const { name, last_timestamp, interval_seconds: currentInterval } = subRow;
   const neverScraped = isNeverScraped(subRow);
   const hot = isHotSubreddit(subRow);
   const watermark = last_timestamp ? toUtcDate(last_timestamp) : null;
   const startedAt = Date.now();
   const acquireProxy = runWithProxy ?? runWithDbOnly;
+  const baseUrl = redditBaseUrl ?? DEFAULT_COMMENT_BASE_URL;
 
   try {
     return await acquireProxy((endpoint) =>
@@ -168,7 +172,7 @@ export async function runCommentScrapeForSubreddit(subRow, { runWithProxy } = {}
 
     let { data: listing } = await fetchRedditJsonWithClient(
       client,
-      commentsUrl(name),
+      commentsUrl(name, baseUrl),
       { limit: 100 },
       fetchMeta(name),
       endpoint,
@@ -182,7 +186,7 @@ export async function runCommentScrapeForSubreddit(subRow, { runWithProxy } = {}
       while (!ctx.stopped && meta.after && pages < config.maxPaginationPages) {
         ({ data: listing } = await fetchRedditJsonWithClient(
           client,
-          commentsUrl(name),
+          commentsUrl(name, baseUrl),
           { limit: 100, after: meta.after },
           fetchMeta(name),
           endpoint,

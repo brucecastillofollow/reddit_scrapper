@@ -130,7 +130,19 @@ export const config = {
   /** Pause DB comment workers while a webshare batch is running */
   websharePauseDbComments: bool(process.env.WEBSHARE_PAUSE_DB_COMMENTS, true),
 
+  webshareRedditBaseUrl: normalizeBaseUrl(
+    process.env.WEBSHARE_REDDIT_BASE_URL,
+    'https://www.reddit.com',
+  ),
+
 };
+
+
+
+function normalizeBaseUrl(value, fallback) {
+  const raw = (value || fallback).trim().replace(/\/+$/, '');
+  return raw || fallback;
+}
 
 
 

@@ -15,6 +15,7 @@ let lastBatchStats = null;
 async function scrapeOneSubreddit(subRow, slot) {
   return runCommentScrapeForSubreddit(subRow, {
     runWithProxy: (fn) => runWithWebshareSlot(fn, slot),
+    redditBaseUrl: config.webshareRedditBaseUrl,
   });
 }
 
